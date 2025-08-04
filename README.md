@@ -1,261 +1,489 @@
 # TDXAgent
 
-An AI-powered multi-platform information intelligence system that automatically collects data from Twitter, Telegram, Discord, and Gmail, then leverages advanced LLM capabilities including autonomous web research to generate comprehensive analytical reports.
+一个由AI驱动的多平台信息情报系统，自动从Twitter、Telegram、Discord和Gmail收集数据，利用包括自主外部信息检索在内的高级LLM能力生成全面的分析报告。
 
-## Overview
+## 概述
 
-TDXAgent transforms information fragmentation across platforms into actionable intelligence through advanced AI orchestration and autonomous research capabilities.
+TDXAgent通过先进的AI编排和自主研究能力，将平台间的信息碎片化转化为可行的情报信息。
 
-**Core capabilities:**
-- 🚀 **Agentic AI Analysis**: Powered by Gemini CLI with autonomous external information retrieval
-- 🌐 **Multi-platform Data Collection**: Twitter/X, Telegram, Discord, Gmail integration
-- 🔍 **Autonomous Research**: AI agents independently search and verify information from external sources
-- 🧠 **Intelligent Context Integration**: Cross-platform information synthesis with fact-checking
-- 📊 **Progressive Analysis Pipeline**: Advanced batch processing with quality detection
-- 🏠 **Privacy-First**: Complete local processing with no cloud data dependencies
+**核心能力：**
+- 🚀 **智能体AI分析**：由具备自主外部信息检索能力的Gemini CLI驱动
+- 🌐 **多平台数据收集**：整合Twitter/X、Telegram、Discord、Gmail
+- 🔍 **自主研究能力**：AI智能体独立搜索和验证来自外部来源的信息
+- 🧠 **智能上下文整合**：跨平台信息综合与事实核查
+- 📊 **渐进式分析管道**：具备质量检测的高级批处理
+- 🏠 **隐私优先**：完全本地处理，无云端数据依赖
 
-## Architecture
+## 架构
 
-The system is built with Python 3.9+ using async/await patterns:
+系统使用Python 3.9+构建，采用async/await模式：
 
 ```
 TDXAgent/
 ├── src/
-│   ├── scrapers/          # Platform data collection modules
-│   ├── llm/              # LLM provider abstractions  
-│   ├── processors/       # Data analysis pipeline
-│   ├── storage/          # Local data persistence
-│   └── config/           # Configuration management
-├── prompts/              # Analysis templates
-├── config.yaml           # Main configuration
-└── TDXAgent_Data/        # Local data directory
+│   ├── scrapers/          # 平台数据收集模块
+│   ├── llm/              # LLM提供商抽象层  
+│   ├── processors/       # 数据分析管道
+│   ├── storage/          # 本地数据持久化
+│   └── config/           # 配置管理
+├── prompts/              # 分析模板
+├── config.yaml           # 主配置文件
+└── TDXAgent_Data/        # 本地数据目录
 ```
 
-## Quick Start
+## 快速开始
 
-### Prerequisites
+### 系统要求
 
 - Python 3.9+
-- Node.js 18+ (required for Gemini CLI agentic capabilities)
-- Internet connection (for AI agent external research)
+- Node.js 18+（智能体AI能力必需）
+- 互联网连接（AI智能体外部研究用）
 
-### Installation
+### 安装
 
 ```bash
 git clone https://github.com/your-repo/TDXAgent.git
 cd TDXAgent
 pip install -r requirements.txt
-playwright install chromium  # For Twitter collection
+playwright install chromium  # 用于Twitter数据收集
 ```
 
-### Configuration
+### 配置
 
-1. **Copy default configuration:**
+1. **复制默认配置：**
 ```bash
 cp src/config/default_config.yaml config.yaml
 ```
 
-2. **Configure Agentic AI Provider (Gemini CLI with autonomous capabilities):**
+2. **配置智能体AI提供商（带自主能力的Gemini CLI）：**
 ```bash
-# Install Gemini CLI with agentic extensions
+# 安装带智能体扩展的Gemini CLI
 npm install -g @google/generative-ai-cli
 gemini auth login
 
-# Verify agentic capabilities are enabled
+# 验证智能体能力已启用
 gemini --help | grep -E "(search|web|browse)"
 ```
 
-3. **Set up platform credentials in `config.yaml`:**
+3. **在`config.yaml`中设置平台凭据：**
 ```yaml
 llm:
   provider: "gemini_cli"
   
 platforms:
   telegram:
-    api_id: "your_api_id"        # From https://my.telegram.org
+    api_id: "your_api_id"        # 从 https://my.telegram.org 获取
     api_hash: "your_api_hash"
     
   gmail:
-    enabled: false               # Optional, requires OAuth setup
+    enabled: false               # 可选，需要OAuth设置
 ```
 
-### Usage
+### 使用方法
 
 ```bash
-# Interactive mode
+# 交互式模式
 python run_tdxagent.py
 
-# CLI mode
-python src/main.py run --hours 6           # Collect & analyze last 6 hours
-python src/main.py status                  # Check system status
-python src/main.py collect --hours 12      # Collection only
-python src/main.py analyze --hours 6       # Analysis only
+# 命令行模式
+python src/main.py run --hours 6           # 收集并分析最近6小时数据
+python src/main.py status                  # 检查系统状态
+python src/main.py collect --hours 12      # 仅收集数据
+python src/main.py analyze --hours 6       # 仅分析数据
 ```
 
-## Platform Support
+## 平台支持
 
-| Platform | Security | Data Type | Notes |
-|----------|----------|-----------|--------|
-| Telegram | ✅ Safe | Group chats | Official API |
-| Gmail | ✅ Safe | Email content | OAuth 2.0 read-only |
-| Discord | ✅ Safe | Chat logs | Official data export |  
-| Twitter/X | ⚠️ Moderate | Tweet content | Browser automation |
+| 平台 | 安全性 | 数据类型 | 备注 |
+|------|--------|----------|------|
+| Telegram | ✅ 安全 | 群组聊天 | 官方API |
+| Gmail | ✅ 安全 | 邮件内容 | OAuth 2.0只读权限 |
+| Discord | ✅ 安全 | 聊天记录 | 官方数据导出 |  
+| Twitter/X | ⚠️ 中等 | 推文内容 | 浏览器自动化 |
 
-## Agentic AI Analysis
+## 数据采集机制
 
-TDXAgent leverages **autonomous AI agents** powered by Gemini CLI that can independently research, verify, and cross-reference information from external sources to provide comprehensive analysis.
+TDXAgent采用**多平台自适应采集架构**，通过平台特定的优化策略实现高效、安全的数据收集。
 
-### Autonomous Capabilities
+### 核心采集优势
 
-- **🔍 External Research**: AI agents automatically search the web for additional context and verification
-- **📊 Fact Verification**: Cross-reference collected information with authoritative sources
-- **🌐 Real-time Updates**: Fetch latest developments related to discussed topics
-- **🧩 Context Integration**: Synthesize information from multiple sources into coherent insights
-- **⚡ Adaptive Analysis**: AI adjusts analysis depth based on information complexity and importance
+- **🚀 高性能收集**：平均收集效率提升3-4倍，支持大规模数据采集
+- **🛡️ 安全第一**：多种安全模式适配不同风险场景
+- **⚡ 智能优化**：自适应滚动、批量处理、去重机制
+- **🎯 精准过滤**：基于时间窗口、关键词、群组的智能过滤
+- **💾 存储优化**：减少61.2%存储空间，提升查询效率
 
-### Multi-Agent Processing
+### Twitter/X 采集机制
 
-The system employs specialized AI agents for different domains:
-- **🪙 Crypto Intelligence Agent**: Autonomous research on blockchain projects, DeFi protocols, and market dynamics
-- **💰 Financial Analysis Agent**: Independent verification of market data, earnings reports, and economic indicators  
-- **🤖 Tech Research Agent**: Automated tracking of AI breakthroughs, product launches, and industry developments
-- **🔍 Open Source Monitor**: Autonomous monitoring of GitHub activities, release notes, and community discussions
+**智能浏览器自动化**：
+- **转发时间优先处理**：智能识别转发推文，使用转发时间进行时间过滤
+- **长推文自动展开**：31+个CSS选择器适应Twitter DOM结构变化
+- **渐进式滚动策略**：三种模式(快速/平衡/安全)平衡效率与检测风险
+- **防检测机制**：模拟人类行为模式，降低账户风险
 
-### Intelligent Information Synthesis
+**性能配置选项**：
+```yaml
+twitter:
+  scroll_settings:
+    mode: "fast"                    # 快速模式：3-4倍效率提升
+    distance_range: [3000, 4000]   # 每次滚动获取12-15条推文
+    content_wait_range: [1, 2]     # 智能等待时间
+  collection_strategy: "time_based" # 时间优先/数量策略
+```
 
-Each agent can:
-- Search external databases and news sources
-- Verify claims and statistics from social media posts
-- Provide additional context from authoritative sources
-- Flag potential misinformation or outdated information
-- Generate confidence scores for analyzed information
+### Telegram 采集机制
 
-## Customization
+**官方API安全采集**：
+- **群组智能过滤**：支持关键词、精确匹配、全量采集模式
+- **认证流程优化**：一次认证，长期使用，支持双重验证
+- **消息格式标准化**：统一处理文本、媒体、转发消息
+- **群组上下文保持**：完整记录群组信息和消息关联
 
-### Analysis Templates
+**配置示例**：
+```yaml
+telegram:
+  group_filter:
+    mode: "keywords"                        # 关键词过滤模式
+    group_keywords: ["加密", "defi", "ai"]  # 投资相关群组
+  max_messages_per_group: 200               # 单群组消息限制
+```
 
-Modify the analysis behavior by editing `prompts/pure_investment_analysis.yaml`:
+**安全特性**：
+- ✅ 官方API：100%安全，无封号风险
+- ✅ 只读权限：仅获取消息，不发送或修改
+- ✅ 批量高效：单次可获取数千条消息
+
+### Gmail 采集机制
+
+**OAuth 2.0安全集成**：
+- **智能邮件过滤**：自动过滤投资、技术、商业相关邮件
+- **主题内容提取**：智能解析邮件主题和关键内容
+- **线程关联处理**：保持邮件对话的完整性
+- **权限最小化**：仅请求必要的只读权限
+
+**认证流程**：
+```bash
+# 首次设置Gmail凭据
+1. 下载credentials.json (Google Cloud Console)
+2. python src/main.py collect --platforms gmail
+3. 浏览器自动打开 → Google账户授权
+4. 自动生成gmail_token.json → 后续无需重新认证
+```
+
+**技术优势**：
+- 🔒 OAuth 2.0：银行级安全认证
+- 📧 智能过滤：仅采集相关邮件内容
+- 🔄 增量同步：避免重复下载
+
+### Discord 采集机制
+
+**数据导出模式**：
+- **官方导出支持**：使用Discord官方数据导出功能
+- **服务器频道分析**：按服务器和频道组织数据
+- **消息关联处理**：保持对话线程的完整性
+- **安全模式优先**：避免Token风险
+
+### 通用采集特性
+
+**存储优化系统**：
+- **智能字段过滤**：移除冗余数据，保留核心信息
+- **日期组织存储**：按消息发布日期存储，提升查询效率
+- **去重机制**：自动识别和处理重复消息
+- **增量采集**：支持基于时间窗口的增量数据收集
+
+**数据质量保证**：
+- 统一消息格式验证
+- 时间戳准确性检查
+- 媒体文件完整性验证
+- 数据完整性恢复机制
+
+## LLM智能分析机制
+
+TDXAgent采用**纯投资导向的AI分析架构**，通过统一平台无关的分析模板和渐进式整合系统，实现高质量的智能分析。
+
+### 核心分析优势
+
+- **🎯 投资导向分析**：专注🪙加密货币、💰金融市场、🤖AI科技、🔍开源项目四大投资领域
+- **🧠 统一智能架构**：完全平台无关的纯投资分析，AI专注价值发现
+- **📊 渐进式整合**：跨批次智能整合，生成统一连贯的完整报告
+- **⚡ 高效Token优化**：减少96.2%Token消耗，提升3-4倍分析速度
+- **🔗 内联引用系统**：智能引用格式，确保信息可追溯性
+
+**投资导向分析框架**：
+```yaml
+# 五层投资分析体系
+Phase 1: 智能分类 - 自动识别投资相关主题
+Phase 2: 重点筛选 - 提取核心领域关键信息  
+Phase 3: 深度解析 - 详细分析投资价值和市场影响
+Phase 4: 信息验证 - 标注需要外部确认的重要信息
+Phase 5: 机会识别 - 提供具体投资建议和操作指导
+```
+
+**时间窗口投资建议**：
+- 🔴 **立即行动** (24小时内): 紧急机会、时间敏感操作
+- 🟡 **短期关注** (1-7天): 交易机会、价格催化剂  
+- 🟢 **中期布局** (1-3个月): 趋势投资、项目发展
+- 🔵 **长期持有** (3个月+): 价值投资、技术革命
+
+### 渐进式报告整合系统
+
+**智能上下文压缩与传递**：
+- **批次间结果传递**：前批次关键话题、结论自动传递给后续批次
+- **智能上下文压缩**：提取关键信息，控制Token使用量
+- **统一报告生成**：消除分批次割裂，生成连贯完整的分析报告
+- **引用完整性保持**：整合过程中完整保留所有原消息链接
+
+**整合前后效果对比**：
+
+*改进前 - 分批次独立分析*：
+```markdown
+### 分析批次 1
+## 关键话题  
+1. 加密货币讨论...
+
+### 分析批次 2
+## 关键话题
+1. AI技术发展...
+```
+
+*改进后 - 统一整合分析*：
+```markdown
+### AI 综合分析
+## 🔥 热门话题
+1. 加密货币市场分析讨论热烈，新增DeFi协议讨论 (来自[CryptoAnalyst的推文](链接))
+2. AI技术发展引起广泛关注，机器学习应用案例增多 (来自多条相关推文)
+```
+
+### 内联链接引用系统
+
+**平台差异化智能引用**：
+- **Twitter/Gmail**: 可点击链接格式 `[用户名的推文](https://x.com/xxx/status/xxx)`
+- **Telegram**: 群组合并格式 `用户名@群组(时间范围)`
+- **Discord**: 服务器频道格式 `用户名@服务器#频道`
+- **混合平台**: 自动适配最佳引用格式组合
+
+**Token优化效果**：
+- 相比分离式引用格式减少18-53%Token消耗
+- Telegram群组合并显示，避免群组名称冗余重复
+- 内联格式提升AI分析效率和用户体验
+
+### 多LLM Provider统一架构
+
+**支持的LLM提供商**：
+- **OpenAI**: GPT-4/GPT-3.5 API集成，企业级稳定性
+- **Gemini**: Google Gemini API，多模态分析能力
+- **Claude CLI**: Anthropic Claude命令行集成，对话式分析
+- **Gemini CLI**: Google Gemini命令行集成，本地化调用
+
+**统一接口特性**：
+```python
+# 统一LLM接口设计
+class BaseLLMProvider:
+    - 提示词文件管理 (PromptFileManager)
+    - 对话收集系统 (LLLConversation)  
+    - 统一错误处理和重试逻辑
+    - Token使用统计和成本估算
+    - 批量处理优化
+```
+
+**Claude CLI Provider特色**：
+- 命令行直接调用，无需API密钥
+- 支持最新Claude模型和功能
+- 本地化处理，数据隐私保护
+
+### 质量保证机制
+
+**AI响应质量检测**：
+- 基于模板的内容验证
+- 无效响应自动识别和处理
+- 批次处理质量监控
+- 详细的执行日志记录
+
+**缓冲延迟优化**：
+- 多平台处理缓冲：4秒延迟提升AI响应质量
+- 多批次处理缓冲：3秒延迟减少无效响应
+- 自适应调整：根据网络和API响应情况调整
+
+**数据完整性保证**：
+- 消息去重和完整性检查
+- 时间戳准确性验证  
+- 跨平台数据一致性
+- 存储错误恢复机制
+
+## 智能体AI分析
+
+TDXAgent利用由Gemini CLI驱动的**自主AI智能体**，能够独立研究、验证和交叉引用来自外部来源的信息，提供全面分析。
+
+### 自主能力
+
+- **🔍 外部研究**：AI智能体自动搜索网络获取额外上下文和验证信息
+- **📊 事实验证**：将收集的信息与权威来源进行交叉引用
+- **🌐 实时更新**：获取相关讨论主题的最新发展
+- **🧩 上下文整合**：将多个来源的信息综合成连贯的洞察
+- **⚡ 自适应分析**：AI根据信息复杂性和重要性调整分析深度
+
+### 智能信息综合
+
+- 搜索外部数据库和新闻源
+- 验证社交媒体帖子中的声明和统计数据
+- 提供来自权威来源的额外上下文
+- 标记潜在的错误信息或过时信息
+- 为分析的信息生成可信度分数
+
+## 自定义配置
+
+### 分析模板
+
+通过编辑`prompts/pure_investment_analysis.yaml`修改分析行为：
 
 ```yaml
 template: |
-  你是一位专业的信息整理专家，擅长从大量社交媒体数据中提取关键信息，
-  按主题分类整理，确保用户不遗漏重要内容。
+  你是一位顶级的投资研究总监，拥有强大的自主研究能力，能够独立搜索外部信息源
+  进行事实验证和上下文补充，确保分析的准确性和完整性。
+  
+  <agentic_capabilities>
+  - 🔍 **自主外部研究**：主动搜索相关信息进行验证和补充
+  - 📊 **事实核查能力**：交叉验证信息来源和数据准确性
+  - 🌐 **实时信息获取**：获取最新发展和市场动态
+  - 🧠 **智能推理整合**：综合多源信息形成深度洞察
+  </agentic_capabilities>
   
   <core_expertise>
-  - 🪙 **加密货币信息专家**：项目动态、价格趋势、技术更新
-  - 💰 **金融信息分析师**：股票动态、市场新闻、经济数据  
-  - 🤖 **AI科技信息专家**：技术突破、产品发布、公司动态
-  - 🔍 **开源项目观察员**：项目更新、技术创新、社区动态
+  - 🪙 **加密货币专家**：项目分析、价格趋势、技术更新
+  - 💰 **金融市场分析师**：股票动态、经济数据、政策影响  
+  - 🤖 **AI科技专家**：技术突破、产品发布、行业趋势
+  - 🔍 **开源项目专家**：技术创新、社区动态、发展前景
   </core_expertise>
 ```
 
-### Configuration Options
+### 配置选项
 
-Key configuration parameters in `config.yaml`:
+`config.yaml`中的关键配置参数：
 
 ```yaml
 llm:
-  provider: "gemini_cli"           # Recommended for agentic capabilities
-  batch_size: 5000                 # Messages per batch
+  provider: "gemini_cli"           # 推荐用于智能体能力
+  batch_size: 5000                 # 每批次消息数
   buffer_delays:
-    multi_platform_delay: 4        # Improves AI response quality
-    multi_batch_delay: 3           # Reduces invalid responses
+    multi_platform_delay: 4        # 提升AI响应质量
+    multi_batch_delay: 3           # 减少无效响应
   
 agentic_features:
-  enable_external_research: true   # Allow AI to search external sources
-  fact_verification: true          # Cross-reference with authoritative sources
-  confidence_scoring: true         # Generate reliability scores
-  max_research_depth: 3            # Levels of recursive research
+  enable_external_research: true   # 允许AI搜索外部来源
+  fact_verification: true          # 与权威来源交叉引用
+  confidence_scoring: true         # 生成可靠性分数
+  max_research_depth: 3            # 递归研究层级
 
 platforms:
   twitter:
     scroll_settings:
-      mode: "fast"                 # fast/balanced/safe for data collection
+      mode: "fast"                 # 数据收集模式：fast/balanced/safe
     max_tweets_per_run: 100
     
   telegram:
     group_filter:
       mode: "keywords"             # keywords/exact/all
-      group_keywords: ["crypto", "defi", "ai", "tech"]
+      group_keywords: ["加密", "defi", "ai", "技术"]
 
 performance:
-  enable_storage_optimization: true    # 61% storage reduction, 96% token savings
-  enable_progressive_integration: true # Unified cross-platform reporting
-  enable_quality_detection: true      # AI response validation
+  enable_storage_optimization: true    # 61%存储减少，96%token节省
+  enable_progressive_integration: true # 统一跨平台报告
+  enable_quality_detection: true      # AI响应验证
 ```
 
-## Output Format
+## 输出格式
 
-Analysis results are saved as Markdown reports in `TDXAgent_Data/reports/`:
+分析结果保存为Markdown报告在`TDXAgent_Data/reports/`目录：
 
 ```
 TDXAgent_Data/reports/
-├── TDXAgent_Telegram_信息整理报告_20250804_1430.md
-├── TDXAgent_Twitter_信息整理报告_20250804_1430.md
+├── TDXAgent_Telegram_投资分析报告_20250804_1430.md
+├── TDXAgent_Twitter_投资分析报告_20250804_1430.md
 └── TDXAgent_多平台汇总报告_20250804_1430.md
 ```
 
-Each report contains:
-- **🔥 热门话题**: Top discussion topics with autonomous research and verification
-- **💡 重要信息汇总**: AI-verified key information with confidence scores
-- **📊 分领域整理**: Domain-specific analysis by specialized AI agents
-- **⚠️ 需要关注的信息**: Items flagged by AI for follow-up with external context
-- **🎯 行动建议**: AI-generated recommendations based on comprehensive analysis
-- **📝 附录：AI对话详情**: Complete AI reasoning process for transparency
+每份报告包含：
+- **🔥 热门话题**：经过自主研究和验证的热门讨论主题
+- **💡 重要信息汇总**：AI验证的关键信息及可信度分数
+- **📊 分领域整理**：专业AI智能体的领域特定分析
+- **⚠️ 需要关注的信息**：AI标记的需要跟进的项目及外部上下文
+- **🎯 行动建议**：基于综合分析的AI生成建议
+- **📝 附录：AI对话详情**：完整的AI推理过程，确保透明度
 
-## Development
+## 开发
 
-### Architecture Components
+### 架构组件
 
-- **Agentic Scrapers**: Platform-specific data collection with intelligent rate limiting and autonomous error recovery
-- **Optimized Storage**: JSONL-based storage with 61% space reduction and date-based organization
-- **Multi-Agent LLM Integration**: Unified interface supporting multiple providers with autonomous research capabilities
-- **Intelligent Processors**: Advanced batch processing with AI quality detection and progressive integration
-- **Quality Assurance**: Template-based AI response validation and error handling
+- **数据收集器**：具备速率限制和错误处理的平台特定数据收集
+- **存储系统**：基于日期组织的JSONL存储系统
+- **LLM集成**：支持多提供商的统一接口（OpenAI、Gemini、Claude CLI）
+- **处理器**：针对大数据集的批处理和渐进式集成
 
-### Agentic Data Flow
+### 数据流程
 
-1. **Intelligent Collection**: Multi-platform scrapers with autonomous error handling and rate adaptation
-2. **Optimized Storage**: Messages stored in date-organized JSONL files with 61% space efficiency
-3. **Agentic Processing**: AI agents analyze data with external research and fact verification
-4. **Quality Validation**: Template-based AI response quality detection and invalid content filtering
-5. **Progressive Integration**: Multi-batch results synthesized with external context integration
-6. **Autonomous Reporting**: AI-generated reports with confidence scores and research citations
+1. **收集**：平台爬虫在指定时间范围内收集消息
+2. **存储**：消息存储在按日期组织的JSONL文件中（`YYYY-MM-DD.jsonl`）
+3. **处理**：LLM以可配置批次分析数据
+4. **整合**：渐进式系统将批次结果合并为统一报告
+5. **输出**：带有来源归属的结构化Markdown报告
 
-### Performance Optimizations & Quality Assurance
+### 性能优化
 
-- **Storage Efficiency**: 61% space reduction through intelligent field filtering and data optimization
-- **Token Economy**: 96% reduction via optimized formatting and smart batching
-- **Processing Speed**: 3-4x improvement through intelligent batch optimization and parallel processing
-- **Memory Management**: Streaming JSONL processing for large datasets with minimal memory footprint
-- **Quality Assurance**: Template-based AI response validation reduces invalid outputs by 90%+
-- **Buffer Intelligence**: Multi-platform (4s) and multi-batch (3s) delays improve AI response success rates
-- **Adaptive Throttling**: Dynamic rate limiting prevents API quota exhaustion and account restrictions
+- **存储优化**：通过智能字段过滤减少61%空间占用
+- **Token使用**：通过优化数据格式减少96%Token消耗
+- **处理速度**：通过批量优化提升3-4倍处理速度
+- **内存优化**：针对大数据集的流式JSONL处理
+- **质量保证**：基于模板的AI响应质量检测
+- **缓冲机制**：多平台和多批次处理缓冲，提升成功率
 
-## Troubleshooting
+## 故障排除
 
-**Configuration Issues:**
+**配置问题：**
 ```bash
-python src/main.py status  # Check system state
+python src/main.py status  # 检查系统状态
 ```
 
-**Platform Authentication:**
-- Telegram: Phone verification required on first run
-- Gmail: OAuth browser flow for credentials setup
-- Twitter: Consider using secondary account due to automation detection
+**平台认证：**
+- Telegram：首次运行需要手机验证
+- Gmail：凭据设置需要OAuth浏览器流程
+- Twitter：由于自动化检测，建议使用次要账户
 
-**Common Problems:**
-- Gemini CLI not found: `npm install -g @google/generative-ai-cli`
-- Agentic features disabled: Verify internet connection and Gemini CLI authentication
-- Permission denied: Check write permissions for `TDXAgent_Data/`
-- Rate limiting: System automatically adjusts, or manually configure `buffer_delays`
-- AI response quality issues: System auto-detects and logs invalid responses
-- External research failing: Check network connectivity and Gemini CLI permissions
+**常见问题：**
+- Gemini CLI未找到：`npm install -g @google/generative-ai-cli`
+- 权限被拒绝：检查`TDXAgent_Data/`目录写入权限
+- 速率限制：调整平台配置中的收集频率
+- AI响应质量差：系统会自动检测并记录无效响应
+- 缓冲时间调整：根据网络情况调整`buffer_delays`配置
 
-## License
+## 高级特性
 
-MIT License - see [LICENSE](LICENSE) file.
+### 智能体AI能力详解
+
+**自主研究流程：**
+1. **信息触发**：检测到需要验证或补充的信息点
+2. **外部搜索**：智能体自动搜索相关权威来源
+3. **信息筛选**：过滤和评估搜索结果的可靠性
+4. **上下文整合**：将外部信息与原始数据结合
+5. **可信度评分**：为整合后的信息生成置信度
+
+### 质量保证机制
+
+**AI响应质量检测：**
+- 基于模板的内容验证
+- 无效响应自动识别和处理
+- 批次处理质量监控
+- 详细的执行日志记录
+
+**数据完整性保证：**
+- 消息去重和完整性检查
+- 时间戳准确性验证
+- 跨平台数据一致性
+- 存储错误恢复机制
+
+## 许可证
+
+MIT许可证 - 详见[LICENSE](LICENSE)文件。
 
 ---
 
-**Note**: This tool is designed for personal information management and research with AI-powered autonomous capabilities. Users are responsible for complying with platform terms of service and applicable regulations. Agentic features require internet connectivity for external research and fact-checking.
+**注意**：此工具设计用于个人信息管理和研究。用户有责任遵守平台服务条款和适用法规。智能体AI功能需要互联网连接进行外部研究，请确保网络连接稳定。
