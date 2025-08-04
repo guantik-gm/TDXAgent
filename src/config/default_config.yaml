@@ -1,0 +1,264 @@
+# TDXAgent 默认配置文件
+# 复制此文件为 config.yaml 并根据需要修改
+
+settings:
+  # 默认获取数据的时间范围（小时）
+  default_hours_to_fetch: 12
+  
+  # 数据存储目录
+  data_directory: "TDXAgent_Data"
+  
+  # 日志级别 (DEBUG, INFO, WARNING, ERROR)
+  log_level: "INFO"
+  
+  # 最大重试次数
+  max_retries: 3
+  
+  # 并发处理数量
+  max_concurrent_tasks: 3
+
+# 网络代理配置
+proxy:
+  # 是否启用代理
+  enabled: true
+  
+  # 代理类型 (http, https, socks5)
+  type: "socks5"
+  
+  # 代理服务器地址
+  host: "127.0.0.1"
+  
+  # 代理端口
+  port: 7890
+  
+  # 用户名（可选）
+  username: ""
+  
+  # 密码（可选）
+  password: ""
+
+# 平台配置
+platforms:
+  # Twitter/X 配置
+  twitter:
+    enabled: true
+    # 是否使用无头模式（建议设为 false 以降低检测风险）
+    headless: false
+    # 随机延迟范围（秒）
+    delay_range: [2, 5]
+    # 最大滚动次数（已移除限制，现在只用时间和条数限制控制停止）
+    # max_scrolls: 10  # 不再使用滚动次数限制
+    
+    # 滚动性能配置 - 可调整收集速度
+    scroll_settings:
+      # 滚动距离范围（像素）- 影响每次滚动获取的推文数量
+      distance_range: [3000, 4000]    # 保守模式：[1500, 2500], 高效模式：[3000, 4000], 激进模式：[4000, 6000]
+      # 内容加载等待时间（秒）- 影响滚动后的等待时间
+      content_wait_range: [1, 2]       # 快速模式：[1, 2], 平衡模式：[2, 4], 安全模式：[3, 5]
+      # 底部检测额外等待（秒）- 接近页面底部时的额外等待
+      bottom_wait_range: [2, 4]        # 快速模式：[1, 3], 平衡模式：[3, 6], 安全模式：[4, 8]
+      # 滚动行为模式: fast(快速但有风险) | balanced(平衡) | safe(安全但慢)
+      mode: "fast"                     # 默认启用高效模式，3-4倍速度提升
+    
+    # 性能优化配置
+    performance_settings:
+      # 页面导航超时（毫秒）
+      navigation_timeout: 30000           # 快速模式: 15000, 平衡模式: 30000, 安全模式: 45000
+      # 元素查找超时（秒）
+      element_timeout: 5.0                # 快速模式: 3.0, 平衡模式: 5.0, 安全模式: 8.0
+      # 推文数据提取超时（秒）
+      tweet_extraction_timeout: 10.0      # 快速模式: 6.0, 平衡模式: 10.0, 安全模式: 15.0
+      # 页面间等待时间（秒）
+      page_transition_wait: 3             # 快速模式: 1, 平衡模式: 3, 安全模式: 5
+    # Cookie 文件路径
+    cookie_file: "twitter_cookies.json"
+    # 登录超时时间（秒）- 默认10分钟
+    login_timeout: 600
+    # 是否使用持久化浏览器（推荐：减少风险检测）
+    use_persistent_browser: true
+    # 用户数据目录（持久化浏览器数据）
+    user_data_dir: "twitter_user_data"
+    
+    # 收集策略配置
+    collection_strategy: "count_based"  # count_based | time_based
+    max_tweets_per_run: 100            # 每次运行最大推文数
+    following_strategy: "fixed_count"   # fixed_count (后续支持: incremental)
+    for_you_strategy: "fixed_count"     # fixed_count only
+    
+    # 增量更新配置（未来功能）
+    incremental:
+      enabled: false
+      state_file: "twitter_last_seen.json"
+      fallback_count: 100
+    
+    # Twitter专用代理配置（可选，覆盖全局代理设置）
+    proxy:
+      enabled: false  # 默认不使用代理，避免SSL问题
+      type: "socks5"
+      host: "127.0.0.1"
+      port: 7890
+    
+  # Telegram 配置
+  telegram:
+    enabled: true
+    # 从 https://my.telegram.org 获取
+    api_id: "your_api_id"
+    api_hash: "your_api_hash"
+    # 会话文件名
+    session_name: "tdxagent_session"
+    
+    # 群组关键词过滤（直接配置，简洁明了）
+    group_whitelist:
+      - "加密"      # 匹配包含"加密"的群组，如"加密货币讨论群🚀💎"
+      - "crypto"    # 匹配包含"crypto"的群组，如"🔥Crypto News & Trading📈"  
+      - "defi"      # 匹配包含"defi"的群组，如"DeFi Alpha ⚡️💰"
+      - "项目"      # 匹配包含"项目"的群组，如"某某项目讨论组📱"
+      - "技术"      # 匹配包含"技术"的群组，如"技术交流🔧👨‍💻"
+      - "开发"      # 匹配包含"开发"的群组，如"Web3开发者社区"
+      - "news"      # 匹配包含"news"的群组，如"📰Blockchain News"
+      - "黄金矿工"  # 示例：匹配包含"黄金矿工"的群组
+    
+    # 匹配设置
+    case_sensitive: false  # 是否区分大小写
+    partial_match: true    # 是否支持部分匹配（关键词作为子字符串）
+      
+    # 消息获取限制配置
+    # 单个群组最大消息数量（防止大群组获取数据过慢）
+    max_messages_per_group: 1000
+    # 全局最大消息数量限制（所有群组总计）
+    max_total_messages: 10000
+    # 是否启用单群组限制（如果为false，使用旧的全局限制）
+    enable_per_group_limit: true
+      
+  # Gmail 配置
+  gmail:
+    enabled: true
+    # OAuth 2.0 认证文件路径
+    credentials_file: "gmail_credentials.json"  # 从 Google Cloud Console 下载
+    token_file: "gmail_token.json"  # 自动生成的访问令牌
+    
+    # 邮件过滤配置
+    filters:
+      # 标签过滤（Gmail 标签名称）
+      labels: 
+        - "IMPORTANT"   # 重要邮件
+        - "UNREAD"      # 未读邮件
+      # 发件人过滤（邮箱地址）
+      from_addresses:
+        - "boss@company.com"
+        - "important@domain.com"
+      # 关键词过滤（包含这些关键词的邮件会被收集）
+      keywords:
+        - "紧急"
+        - "urgent"
+        - "meeting"
+        - "项目"
+      # 排除关键词过滤（包含这些关键词的邮件会被排除）
+      # exclude_keywords:
+      # 排除垃圾邮件和已删除邮件
+      exclude_spam: true
+    
+    # API 请求配置
+    batch_size: 100        # 每批处理的邮件数量
+    max_results: 500       # 最大获取邮件数量
+    min_delay: 0.5         # 请求间最小延迟（秒）
+    max_requests_per_minute: 120  # 每分钟最大请求数
+
+  # Discord 配置
+  discord:
+    enabled: true
+    # 模式：safe（安全模式，使用官方导出）或 experimental（实验模式，有封号风险）
+    mode: "safe"
+    # 官方导出数据路径
+    export_path: "discord_exports"
+    # 实验模式配置（仅在 mode: experimental 时生效）
+    experimental:
+      # Discord token（高风险，可能导致封号）
+      token: ""
+      # 要监控的服务器 ID 列表
+      server_ids: []
+
+# LLM 配置
+llm:
+  # 提供商：openai、gemini、claude_cli 或 gemini_cli
+  provider: "claude_cli"
+  
+  # 批处理大小
+  batch_size: 50
+  
+  # 最大 token 数量
+  max_tokens: 4000
+  
+  # 请求超时时间（秒）
+  timeout: 30
+  
+  # 启用提示词文件保存（调试和优化用）
+  enable_prompt_files: true
+  
+  # 缓冲时间配置（秒）- 提升AI响应成功率
+  buffer_delays:
+    # 多平台处理前的缓冲时间
+    multi_platform_delay: 4
+    # 多批次处理前的缓冲时间  
+    multi_batch_delay: 3
+    # 批次间延迟时间
+    delay_between_batches: 2
+  
+  # OpenAI 配置
+  openai:
+    api_key: "sk-your-openai-api-key"
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+    temperature: 0.7
+    
+  # Gemini 配置
+  gemini:
+    api_key: "your-gemini-api-key"
+    model: "gemini-1.5-flash"
+    temperature: 0.7
+  
+  # Claude CLI 配置
+  claude_cli:
+    # Claude CLI 命令路径（默认为系统PATH中的claude）
+    cli_path: "claude"
+    # 命令超时时间（秒）
+    timeout: 120
+    # 模型选择（留空使用CLI默认模型）
+    model: ""
+  
+  # Gemini CLI 配置
+  gemini_cli:
+    # Gemini CLI 命令路径（默认为系统PATH中的gemini）
+    cli_path: "gemini"
+    # 命令超时时间（秒）
+    timeout: 120
+    # 模型选择（留空使用CLI默认模型）
+    model: ""
+
+# 注意：提示词模板现在由 PromptManager 管理，不再使用配置文件中的模板
+# 如需自定义模板，请参考 prompts/ 目录下的模板文件
+
+# 输出配置
+output:
+  # 报告格式
+  format: "markdown"
+  
+  # 报告存储路径（可配置为其他笔记软件路径）
+  reports_directory: "TDXAgent_Data/reports"
+  
+  # 报告文件名模板
+  filename_template: "Summary_{platform}_{timestamp}.md"
+  
+  # 是否包含原文链接
+  include_links: true
+  
+  # 是否包含媒体文件信息
+  include_media: true
+  
+  # 多平台报告管理配置
+  multi_platform_reports:
+    # 生成汇总报告后是否保留分平台报告 (true: 保留, false: 删除)
+    keep_individual_reports: false
+    # 只有多个平台时才生成汇总报告 (true: 是, false: 始终生成)
+    generate_only_when_multiple: true
+  

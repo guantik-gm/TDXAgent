@@ -1,0 +1,132 @@
+# 配置文件
+config.yaml
+config.yaml.bak
+*.env
+.env
+.env.*
+
+*.session
+*.key
+*.pem
+*.crt
+*.p12
+api_keys/
+credentials/
+gmail_credentials.json
+gmail_token.json
+
+# 数据目录
+TDXAgent_Data/
+discord_exports/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# 浏览器数据
+playwright-browsers/
+browser_data/
+cookies/
+sessions/
+twitter_cookies.json
+twitter_user_data/
+
+# 备份文件
+*.bak
+*.backup
+*~
+
+CLAUDE.md
+
+# 个人设置和临时文件
+test-*.md
+test_*.py
+*_test.py
+temp_*.py
+debug_*.py
+example_*.py
+
+# 测试相关文件  
+test_data/
+scripts/
+
+# 提示词模板备份
+prompts/backup/
+prompts/master_*.yaml
+prompts/unified_*.yaml
+
+# 开源项目标准忽略项
+*.orig
+*.rej
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# GitHub 相关
+.github/FUNDING.yml

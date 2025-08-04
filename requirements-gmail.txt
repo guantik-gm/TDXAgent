@@ -1,0 +1,10 @@
+# Gmail integration dependencies for TDXAgent
+# Run: pip install -r requirements-gmail.txt
+
+# Google API client libraries for Gmail integration
+google-auth>=2.21.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.96.0
+
+# For handling Gmail message parsing
+email-validator>=2.0.0
