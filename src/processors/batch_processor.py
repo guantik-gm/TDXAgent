@@ -7,6 +7,7 @@ with intelligent token management and optimization strategies.
 
 import asyncio
 import math
+import re
 import time
 from typing import List, Dict, Any, Optional, Callable, Tuple
 from datetime import datetime
@@ -40,55 +41,62 @@ class BatchExecutionDetail:
         if not self.success or not self.response_content:
             return False
         
-        # 使用基于模板的质量检测
+        # 使用基于模板的质量检测（同步版本）
         try:
             from processors.template_quality_checker import get_quality_checker
-            from processors.prompt_manager import PromptManager
-            import asyncio
             
-            # 获取质量检测器和提示词管理器
+            # 获取质量检测器，不需要PromptManager
             quality_checker = get_quality_checker()
-            prompt_manager = PromptManager()
             
-            # 确保PromptManager已初始化
-            async def check_quality():
-                await prompt_manager._ensure_initialized()
-                return quality_checker.is_valid_response(
-                    content=self.response_content,
-                    prompt_manager=prompt_manager,
-                    template_name='pure_investment_analysis',
-                    min_sections_required=1  # 至少包含一个章节就认为有效
-                )
-            
-            # 执行异步质量检查
-            try:
-                # 尝试获取当前事件循环
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 如果事件循环正在运行，创建任务但不等待（使用fallback）
-                    import logging
-                    logging.getLogger("tdxagent.batch_processor").warning(
-                        "Cannot run async quality check in running event loop, using fallback"
-                    )
-                    return len(self.response_content.strip()) >= 50
-                else:
-                    # 如果事件循环未运行，可以直接运行
-                    result = loop.run_until_complete(check_quality())
-                    return result.is_valid
-            except RuntimeError:
-                # 没有事件循环，创建新的
-                result = asyncio.run(check_quality())
-                return result.is_valid
-            
-        except Exception as e:
-            # 如果质量检测出错，使用简化的fallback检测
-            import logging
-            logging.getLogger("tdxagent.batch_processor").warning(
-                f"Template-based quality check failed, using fallback: {e}"
+            # 直接进行同步质量检查
+            result = quality_checker.is_valid_response(
+                content=self.response_content,
+                template_name='pure_investment_analysis',
+                min_sections_required=1  # 至少包含一个章节就认为有效
             )
             
-            # Fallback: 简单长度检查
-            return len(self.response_content.strip()) >= 50
+            return result.is_valid
+            
+        except Exception as e:
+            # 如果质量检测出错，使用增强的fallback检测
+            import logging
+            logging.getLogger("tdxagent.batch_processor").warning(
+                f"Template-based quality check failed, using enhanced fallback: {e}"
+            )
+            
+            # 增强的fallback: 检查内容特征，避免系统消息被误判
+            content = self.response_content.strip()
+            
+            # 基本长度检查
+            if len(content) < 50:
+                return False
+            
+            # 检查是否只是系统消息
+            system_message_patterns = [
+                r'^Loaded cached credentials\.',
+                r'^Loading\s+.*\.\.\.',
+                r'^Authenticating\s+.*\.\.\.',
+                r'^Connected to\s+.*',
+                r'^Error:\s+',
+                r'^Warning:\s+'
+            ]
+            
+            # 如果内容主要是系统消息，认为无效
+            for pattern in system_message_patterns:
+                if re.match(pattern, content, re.IGNORECASE):
+                    # 检查是否还有其他有意义的内容
+                    lines = content.split('\n')
+                    non_empty_lines = [line.strip() for line in lines if line.strip()]
+                    if len(non_empty_lines) <= 3:  # 只有很少几行，可能都是系统消息
+                        return False
+            
+            # 检查是否包含基本的分析结构
+            has_section_headers = bool(re.search(r'^##\s+', content, re.MULTILINE))
+            has_analysis_content = any(keyword in content.lower() for keyword in [
+                '分析', '建议', '总结', '结论', '观察', '发现', '趋势', '机会', '风险'
+            ])
+            
+            return has_section_headers or has_analysis_content
 
 
 @dataclass
@@ -175,6 +183,12 @@ class BatchConfig:
     multi_batch_delay: float = 3.0  # 多批次处理前的缓冲时间
     token_buffer: int = 8000  # 为响应保留更多tokens
     
+    # 质量重试配置
+    quality_retry_enabled: bool = True  # 启用质量重试
+    max_quality_retries: int = 3  # 最大质量重试次数
+    quality_retry_delay: float = 10.0  # 初始重试延迟(秒)
+    quality_retry_backoff_factor: float = 1.5  # 延迟递增倍数
+    
     def validate(self) -> bool:
         """Validate configuration parameters."""
         return (
@@ -183,7 +197,10 @@ class BatchConfig:
             self.max_concurrent_batches > 0 and
             self.max_retries >= 0 and
             self.delay_between_batches >= 0 and
-            self.token_buffer >= 0
+            self.token_buffer >= 0 and
+            self.max_quality_retries >= 0 and
+            self.quality_retry_delay >= 0 and
+            self.quality_retry_backoff_factor > 0
         )
 
 
@@ -423,7 +440,7 @@ class BatchProcessor:
                     )
                 else:
                     # Use regular template for first batch
-                    result = await self._process_single_batch(batch, prompt_template, platform)
+                    result = await self._process_batch_with_quality_retry(batch, prompt_template, platform, batch_index)
                 
                 if not result.success:
                     self.logger.error(f"Batch {batch_index + 1} failed: {result.error_message}")
@@ -446,9 +463,22 @@ class BatchProcessor:
                     self.logger.warning(f"平台 {platform} 批次 {batch_index + 1} 返回内容质量不佳或无有效结果")
                     self.logger.warning(f"LLM命令: {batch_detail.llm_command}")
                     
-                    # 记录响应内容摘要用于调试
-                    content_preview = result.content[:200] + "..." if len(result.content) > 200 else result.content
-                    self.logger.debug(f"无效响应内容预览: {content_preview}")
+                    # 记录完整响应内容用于调试
+                    if len(result.content) > 1000:
+                        self.logger.warning(f"完整响应内容 (前1000字符): {result.content[:1000]}...")
+                        self.logger.warning(f"完整响应内容 (后500字符): ...{result.content[-500:]}")
+                    else:
+                        self.logger.warning(f"完整响应内容: {result.content}")
+                    
+                    # 如果响应对象有错误信息或额外信息，也记录下来
+                    if hasattr(result, 'error_message') and result.error_message:
+                        self.logger.warning(f"响应错误信息: {result.error_message}")
+                    
+                    # 记录响应元数据
+                    self.logger.warning(f"响应成功状态: {result.success}")
+                    self.logger.warning(f"响应Token使用: {result.usage.get('total_tokens', 'unknown')}")
+                    self.logger.warning(f"响应提供商: {result.provider}")
+                    self.logger.warning(f"响应模型: {result.model}")
                     
                     # 对于无效响应，我们有几个选择：
                     # 1. 跳过这个批次，不更新current_analysis
@@ -750,6 +780,109 @@ class BatchProcessor:
             error_message="All retry attempts failed"
         )
     
+    async def _process_batch_with_quality_retry(self, batch: List[Dict[str, Any]], 
+                                               prompt_template: str, 
+                                               platform: str = "",
+                                               batch_index: int = 0) -> LLMResponse:
+        """
+        Process a batch with intelligent quality retry mechanism.
+        
+        Args:
+            batch: List of messages in the batch
+            prompt_template: Prompt template
+            platform: Platform name for logging
+            batch_index: Index of the batch for logging
+            
+        Returns:
+            LLM response with quality validation
+        """
+        if not self.config.quality_retry_enabled:
+            # 如果质量重试未启用，使用原有逻辑
+            self.logger.info(f"批次 {batch_index + 1} 质量重试被禁用，使用直接处理")
+            return await self._process_single_batch(batch, prompt_template, platform)
+        
+        self.logger.info(f"批次 {batch_index + 1} 开始质量重试处理，最大重试次数: {self.config.max_quality_retries}")
+        
+        retry_delay = self.config.quality_retry_delay
+        
+        for retry_attempt in range(self.config.max_quality_retries + 1):
+            # 执行批次处理
+            response = await self._process_single_batch(batch, prompt_template, platform)
+            
+            # 如果LLM调用本身失败，不进行质量重试，直接返回失败
+            if not response.success:
+                self.logger.warning(f"批次 {batch_index + 1} LLM调用失败，不进行质量重试: {response.error_message}")
+                return response
+            
+            # 创建BatchExecutionDetail来检查内容质量
+            batch_detail = BatchExecutionDetail(
+                batch_number=batch_index + 1,
+                message_count=len(batch),
+                success=response.success,
+                tokens_used=response.usage.get('total_tokens', 0),
+                processing_time=0.0,  # 这里不计算时间，主要用于质量检测
+                response_content=response.content,
+                llm_command=getattr(response, 'call_command', 'command not available'),
+                command_type="process_batch_with_quality_retry"
+            )
+            
+            # 检查响应质量
+            if batch_detail.has_meaningful_content:
+                if retry_attempt > 0:
+                    self.logger.info(f"批次 {batch_index + 1} 质量重试第 {retry_attempt} 次成功")
+                return response
+            
+            # 内容质量不佳，考虑重试
+            if retry_attempt < self.config.max_quality_retries:
+                self.logger.warning(f"批次 {batch_index + 1} 质量检测失败，将在 {retry_delay:.1f} 秒后进行第 {retry_attempt + 1} 次重试")
+                
+                # 详细记录问题响应内容用于调试
+                if len(response.content) > 1000:
+                    self.logger.warning(f"问题响应内容 (前1000字符): {response.content[:1000]}...")
+                    self.logger.warning(f"问题响应内容 (后500字符): ...{response.content[-500:]}")
+                else:
+                    self.logger.warning(f"问题响应完整内容: {response.content}")
+                
+                # 记录响应元数据
+                if hasattr(response, 'error_message') and response.error_message:
+                    self.logger.warning(f"响应错误信息: {response.error_message}")
+                self.logger.warning(f"LLM命令: {getattr(response, 'call_command', 'unknown')}")
+                
+                # 等待重试延迟
+                await asyncio.sleep(retry_delay)
+                
+                # 递增延迟时间
+                retry_delay *= self.config.quality_retry_backoff_factor
+            else:
+                # 所有重试都失败了
+                self.logger.error(f"批次 {batch_index + 1} 经过 {self.config.max_quality_retries} 次质量重试仍然失败")
+                
+                # 记录完整的最终响应内容
+                if len(response.content) > 1000:
+                    self.logger.error(f"最终响应内容 (前1000字符): {response.content[:1000]}...")
+                    self.logger.error(f"最终响应内容 (后500字符): ...{response.content[-500:]}")
+                else:
+                    self.logger.error(f"最终响应完整内容: {response.content}")
+                
+                # 记录响应元数据
+                if hasattr(response, 'error_message') and response.error_message:
+                    self.logger.error(f"最终响应错误信息: {response.error_message}")
+                self.logger.error(f"最终LLM命令: {getattr(response, 'call_command', 'unknown')}")
+                
+                # 返回一个标记为失败的响应
+                return LLMResponse(
+                    content="",
+                    usage=response.usage,
+                    model=response.model,
+                    provider=response.provider,
+                    timestamp=response.timestamp,
+                    success=False,
+                    error_message=f"质量重试失败: 响应内容质量不佳，经过 {self.config.max_quality_retries} 次重试仍无法获得有效结果"
+                )
+        
+        # 理论上不应该到达这里
+        return response
+    
     def _update_stats(self, batch_result: BatchResult) -> None:
         """Update global processing statistics."""
         self._processing_stats['total_batches_processed'] += (
@@ -1028,8 +1161,66 @@ class BatchProcessor:
                     estimated_tokens = self.llm_provider.estimate_tokens(batch_prompt)
                     self.logger.info(f"处理单批次 {len(batch_messages)} 条消息 (预估 {estimated_tokens} tokens)")
                     
-                    # Process this batch
-                    response = await self.llm_provider.generate_response(batch_prompt, platform=platform)
+                    # 使用质量重试机制处理单批次
+                    if self.config.quality_retry_enabled:
+                        retry_delay = self.config.quality_retry_delay
+                        
+                        for retry_attempt in range(self.config.max_quality_retries + 1):
+                            # Process this batch
+                            response = await self.llm_provider.generate_response(batch_prompt, platform=platform)
+                            
+                            # 如果LLM调用本身失败，不进行质量重试
+                            if not response.success:
+                                self.logger.warning(f"单批次 LLM调用失败，不进行质量重试: {response.error_message}")
+                                break
+                            
+                            # 创建BatchExecutionDetail来检测质量
+                            batch_detail = BatchExecutionDetail(
+                                batch_number=1,
+                                message_count=len(batch_messages),
+                                success=response.success,
+                                tokens_used=response.usage.get('total_tokens', 0),
+                                processing_time=0.0,
+                                response_content=response.content,
+                                llm_command=getattr(response, 'call_command', 'command not available'),
+                                command_type="process_messages_with_template"
+                            )
+                            
+                            # 检查响应质量
+                            if batch_detail.has_meaningful_content:
+                                if retry_attempt > 0:
+                                    self.logger.info(f"单批次质量重试第 {retry_attempt} 次成功")
+                                break
+                            
+                            # 内容质量不佳，考虑重试
+                            if retry_attempt < self.config.max_quality_retries:
+                                self.logger.warning(f"单批次质量检测失败，将在 {retry_delay:.1f} 秒后进行第 {retry_attempt + 1} 次重试")
+                                self.logger.warning(f"问题响应内容预览: {response.content[:200]}...")
+                                
+                                # 等待重试延迟
+                                await asyncio.sleep(retry_delay)
+                                
+                                # 递增延迟时间
+                                retry_delay *= self.config.quality_retry_backoff_factor
+                            else:
+                                # 所有重试都失败了
+                                self.logger.error(f"单批次经过 {self.config.max_quality_retries} 次质量重试仍然失败")
+                                self.logger.error(f"最终响应内容: {response.content[:500]}...")
+                                
+                                # 标记为失败
+                                response = LLMResponse(
+                                    content="",
+                                    usage=response.usage,
+                                    model=response.model,
+                                    provider=response.provider,
+                                    timestamp=response.timestamp,
+                                    success=False,
+                                    error_message=f"质量重试失败: 响应内容质量不佳，经过 {self.config.max_quality_retries} 次重试仍无法获得有效结果"
+                                )
+                                break
+                    else:
+                        # 如果质量重试未启用，使用原有逻辑
+                        response = await self.llm_provider.generate_response(batch_prompt, platform=platform)
                     
                     processing_time = time.time() - start_time
                     

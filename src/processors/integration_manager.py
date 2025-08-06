@@ -69,71 +69,38 @@ class IntegrationManager:
     
     def compress_analysis_context(self, full_analysis: str, max_tokens: int) -> AnalysisContext:
         """
-        Compress full analysis into key context for next batch.
+        Simple context management - directly pass complete previous analysis.
         
         Args:
             full_analysis: Complete analysis text from previous batch
-            max_tokens: Maximum tokens allowed for compressed context
+            max_tokens: Token limit parameter (ignored, kept for interface compatibility)
             
         Returns:
-            AnalysisContext with compressed information
+            AnalysisContext with the complete previous analysis
         """
         try:
-            # Extract key components
-            key_topics = self._extract_key_topics(full_analysis)
-            important_conclusions = self._extract_important_conclusions(full_analysis)
-            citations = self._extract_citations(full_analysis)
+            # Simple approach: directly use the complete previous analysis as context
+            token_count = self._estimate_tokens(full_analysis)
             
-            # Create initial context
-            context = AnalysisContext(
-                key_topics=key_topics,
-                important_conclusions=important_conclusions,
-                citations=citations,
-                summary="",
-                token_count=0
-            )
+            self.logger.info(f"Using complete previous analysis as context: {token_count} tokens")
             
-            # Generate compressed text and check token count
-            compressed_text = context.to_compressed_text()
-            token_count = self._estimate_tokens(compressed_text)
-            
-            # If too long, progressively reduce content
-            if token_count > max_tokens:
-                context = self._progressive_compression(context, max_tokens)
-                compressed_text = context.to_compressed_text()
-                token_count = self._estimate_tokens(compressed_text)
-            
-            # If compressed text is empty, use truncated original analysis as fallback
-            if not compressed_text.strip():
-                self.logger.warning("Information extraction failed, using truncated original analysis as fallback")
-                # Truncate original analysis to fit token limit
-                words = full_analysis.split()
-                max_words = max_tokens * 3  # Rough estimate: 3 words per token
-                if len(words) > max_words:
-                    truncated_analysis = " ".join(words[:max_words]) + "..."
-                else:
-                    truncated_analysis = full_analysis
-                
-                context.summary = truncated_analysis
-                context.token_count = self._estimate_tokens(truncated_analysis)
-            else:
-                context.summary = compressed_text
-                context.token_count = token_count
-            
-            self.logger.debug(f"Compressed analysis: {context.token_count} tokens, "
-                            f"{len(key_topics)} topics, {len(important_conclusions)} conclusions")
-            
-            return context
-            
-        except Exception as e:
-            self.logger.error(f"Failed to compress analysis context: {e}")
-            # Return minimal context on error
             return AnalysisContext(
                 key_topics=[],
                 important_conclusions=[],
                 citations=[],
-                summary="前一批次分析出现处理错误",
-                token_count=self._estimate_tokens("前一批次分析出现处理错误")
+                summary=full_analysis,
+                token_count=token_count
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Failed to prepare analysis context: {e}")
+            # Return empty context on error
+            return AnalysisContext(
+                key_topics=[],
+                important_conclusions=[],
+                citations=[],
+                summary="",
+                token_count=0
             )
     
     def _extract_key_topics(self, analysis: str) -> List[str]:

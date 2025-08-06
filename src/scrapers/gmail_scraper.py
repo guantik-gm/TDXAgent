@@ -69,6 +69,56 @@ class GmailScraper(BaseScraper):
         
         self.logger.info("Gmail scraper initialized")
     
+    def _setup_proxy(self) -> None:
+        """Setup proxy configuration for Gmail API requests."""
+        try:
+            # Get proxy configuration from config manager
+            from config.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            
+            if config_manager.proxy.enabled:
+                import os
+                proxy_url = None
+                
+                if config_manager.proxy.type in ['http', 'https']:
+                    # HTTP/HTTPS proxy
+                    if config_manager.proxy.username and config_manager.proxy.password:
+                        proxy_url = f"http://{config_manager.proxy.username}:{config_manager.proxy.password}@{config_manager.proxy.host}:{config_manager.proxy.port}"
+                    else:
+                        proxy_url = f"http://{config_manager.proxy.host}:{config_manager.proxy.port}"
+                    
+                    self.logger.info(f"Using HTTP proxy: {config_manager.proxy.host}:{config_manager.proxy.port}")
+                    
+                elif config_manager.proxy.type == 'socks5':
+                    # SOCKS5 proxy - convert to HTTP proxy format for Google API
+                    if config_manager.proxy.username and config_manager.proxy.password:
+                        proxy_url = f"socks5://{config_manager.proxy.username}:{config_manager.proxy.password}@{config_manager.proxy.host}:{config_manager.proxy.port}"
+                    else:
+                        proxy_url = f"socks5://{config_manager.proxy.host}:{config_manager.proxy.port}"
+                    
+                    self.logger.info(f"Using SOCKS5 proxy: {config_manager.proxy.host}:{config_manager.proxy.port}")
+                
+                if proxy_url:
+                    # Set proxy environment variables for Google API client
+                    os.environ['HTTP_PROXY'] = proxy_url
+                    os.environ['HTTPS_PROXY'] = proxy_url
+                    
+                    # Also set lowercase versions (some libraries use these)
+                    os.environ['http_proxy'] = proxy_url
+                    os.environ['https_proxy'] = proxy_url
+                    
+                    self.logger.info("Proxy environment variables set for Gmail API")
+            else:
+                # Clear proxy environment variables if they exist
+                import os
+                proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']
+                for var in proxy_vars:
+                    if var in os.environ:
+                        del os.environ[var]
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to setup proxy configuration: {e}")
+    
     async def authenticate(self) -> bool:
         """
         Authenticate with Gmail using OAuth 2.0.
@@ -78,6 +128,9 @@ class GmailScraper(BaseScraper):
         """
         try:
             self.logger.info("Starting Gmail OAuth authentication...")
+            
+            # Setup proxy configuration if enabled
+            self._setup_proxy()
             
             # Load existing credentials
             if self._load_existing_credentials():
@@ -90,7 +143,10 @@ class GmailScraper(BaseScraper):
             # Build Gmail service
             self.service = build('gmail', 'v1', credentials=self.credentials)
             
-            # Test authentication
+            # Test authentication with timeout
+            import socket
+            socket.setdefaulttimeout(30)  # 30 second timeout
+            
             profile = self.service.users().getProfile(userId='me').execute()
             email_address = profile.get('emailAddress')
             
@@ -113,10 +169,19 @@ class GmailScraper(BaseScraper):
                 
                 # Refresh if expired
                 if self.credentials and self.credentials.expired and self.credentials.refresh_token:
-                    self.credentials.refresh(Request())
-                    # Save refreshed credentials
-                    with open(self.token_file, 'w') as token:
-                        token.write(self.credentials.to_json())
+                    try:
+                        self.logger.info("Refreshing expired Gmail credentials...")
+                        # Ensure proxy is set for credential refresh
+                        self._setup_proxy()
+                        self.credentials.refresh(Request())
+                        # Save refreshed credentials
+                        with open(self.token_file, 'w') as token:
+                            token.write(self.credentials.to_json())
+                        self.logger.info("Gmail credentials refreshed successfully")
+                    except Exception as refresh_error:
+                        self.logger.error(f"Failed to refresh Gmail credentials: {refresh_error}")
+                        self.logger.error(f"This may be due to network connectivity or proxy configuration issues")
+                        return False
                 
                 return self.credentials and self.credentials.valid
             return False
@@ -139,6 +204,9 @@ class GmailScraper(BaseScraper):
                 )
                 return False
             
+            # Ensure proxy is set for OAuth flow
+            self._setup_proxy()
+            
             # Run OAuth flow
             flow = InstalledAppFlow.from_client_secrets_file(
                 self.credentials_file, self.SCOPES
@@ -156,6 +224,7 @@ class GmailScraper(BaseScraper):
             
         except Exception as e:
             self.logger.error(f"OAuth flow failed: {e}")
+            self.logger.error(f"This may be due to network connectivity or proxy configuration issues")
             return False
     
     async def scrape(self, hours_back: int = 12, **kwargs) -> ScrapingResult:

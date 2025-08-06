@@ -221,12 +221,38 @@ class ReportGenerator:
 """
         
         # Add platform-specific sections
+        successful_platforms = []
+        failed_platforms = []
+        
         for platform, result in platform_results.items():
+            if result is None:
+                failed_platforms.append(platform)
+                content += f"""### {self._get_platform_display_name(platform)}
+
+- **状态**: ❌ **处理失败**
+- **原因**: 平台处理完全失败，未返回结果
+
+"""
+                continue
+                
             platform_name = self._get_platform_display_name(platform)
             success_rate = result.success_rate
             
+            # 检查是否有有效的分析结果
+            has_valid_analysis = result.summaries and any(summary.strip() for summary in result.summaries)
+            
+            if has_valid_analysis:
+                successful_platforms.append(platform)
+                status_icon = "✅"
+                status_text = "处理成功"
+            else:
+                failed_platforms.append(platform)
+                status_icon = "⚠️"
+                status_text = "分析失败"
+            
             content += f"""### {platform_name}
 
+- **状态**: {status_icon} **{status_text}**
 - **消息数量**: {result.total_messages:,}
 - **处理成功**: {result.processed_messages:,}
 - **成功率**: {success_rate:.1f}%
@@ -236,17 +262,71 @@ class ReportGenerator:
 """
             
             # Add AI analysis summary if available
-            if result.summaries:
+            if has_valid_analysis:
                 content += "**AI 分析摘要**:\n\n"
                 # Since we now have integrated results, show the full summary
                 summary = result.summaries[0]  # Only one integrated summary
                 preview = summary[:300] + '...' if len(summary) > 300 else summary
                 content += f"{preview}\n\n"
+            else:
+                # 添加失败原因说明
+                if result.errors:
+                    content += f"**失败原因**: {'; '.join(result.errors)}\n\n"
+                else:
+                    content += f"**失败原因**: AI响应质量不佳，可能包含系统消息或无效内容\n\n"
+        
+        # 添加失败平台的汇总说明
+        if failed_platforms:
+            content += f"""
+## ⚠️ 处理问题汇总
+
+以下平台在分析过程中遇到问题：
+
+"""
+            for platform in failed_platforms:
+                result = platform_results.get(platform)
+                if result is None:
+                    content += f"- **{self._get_platform_display_name(platform)}**: 平台处理完全失败，未返回结果\n"
+                elif result.errors:
+                    content += f"- **{self._get_platform_display_name(platform)}**: {'; '.join(result.errors)}\n"
+                else:
+                    content += f"- **{self._get_platform_display_name(platform)}**: AI响应质量检测失败，可能包含系统消息或无效内容\n"
+            
+            content += f"\n**建议**: 检查网络连接、API配置，或稍后重试分析。如问题持续，可能是AI模型暂时不稳定。\n\n"
+
+        # 添加综合AI分析结果
+        content += """## 🤖 AI 分析结果
+
+"""
+        
+        # 检查是否有任何有效的分析结果
+        has_any_valid_analysis = False
+        for platform, result in platform_results.items():
+            if result and result.summaries and any(summary.strip() for summary in result.summaries):
+                has_any_valid_analysis = True
+                content += f"""### AI 综合分析
+
+"""
+                # 显示分析摘要
+                for summary in result.summaries:
+                    if summary.strip():  # 只显示非空摘要
+                        content += f"{summary}\n\n"
+                break  # 只显示第一个有效的分析结果
+        
+        if not has_any_valid_analysis:
+            content += "**⚠️ 暂无有效的AI分析结果**\n\n"
+            if failed_platforms:
+                platform_names = [self._get_platform_display_name(p) for p in failed_platforms]
+                if len(failed_platforms) == len(platform_results):
+                    content += f"**原因**: 所有平台 ({', '.join(platform_names)}) 的AI分析都未能产生有效结果。\n\n"
+                else:
+                    content += f"**原因**: 部分平台 ({', '.join(platform_names)}) 的AI分析未能产生有效结果。\n\n"
         
         # Add error summary if any
         all_errors = []
         for result in platform_results.values():
-            all_errors.extend(result.errors)
+            if result:  # 检查result不为None
+                all_errors.extend(result.errors)
         
         if all_errors:
             content += f"""## ⚠️ 错误报告
@@ -487,8 +567,13 @@ class ReportGenerator:
         platforms_included = analysis_result['platforms_included']
         platform_counts = analysis_result['platform_message_counts']
         
-        # 生成报告时间
-        report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC") if start_time is None else start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+        # 生成报告时间（使用本地时间）
+        if start_time is None:
+            report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            # 如果start_time是UTC时间，转换为本地时间显示
+            local_time = start_time.astimezone() if start_time.tzinfo else start_time
+            report_time = local_time.strftime("%Y-%m-%d %H:%M:%S")
         
         # 确定时间期间描述
         if hours_back:

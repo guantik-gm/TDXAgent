@@ -232,17 +232,19 @@ class GeminiCliProvider(BaseLLMProvider):
             # Parse output
             output = stdout.decode('utf-8').strip()
             
-            # Debug logging for CLI output
-            self.logger.debug(f"Gemini CLI stdout length: {len(output)} characters")
-            if len(output) > 500:
-                self.logger.debug(f"Gemini CLI stdout preview (first 500 chars): {output[:500]}...")
-            else:
-                self.logger.debug(f"Gemini CLI stdout (full): {output}")
+            # Enhanced logging for CLI output - show both stdout and stderr
+            stderr_text = stderr.decode('utf-8').strip() if stderr else ""
             
-            if stderr:
-                stderr_text = stderr.decode('utf-8').strip()
-                if stderr_text:
-                    self.logger.debug(f"Gemini CLI stderr: {stderr_text}")
+            self.logger.info(f"Gemini CLI stdout length: {len(output)} characters")
+            if len(output) > 500:
+                self.logger.info(f"Gemini CLI stdout preview (first 500 chars): {output[:500]}...")
+            else:
+                self.logger.info(f"Gemini CLI stdout (full): {output}")
+            
+            if stderr_text:
+                self.logger.info(f"Gemini CLI stderr: {stderr_text}")
+            else:
+                self.logger.debug("Gemini CLI stderr: (empty)")
             
             if not output:
                 self.logger.warning("Gemini CLI returned empty output")

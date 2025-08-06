@@ -276,7 +276,10 @@ class TDXAgent:
         start_date = start_time.date()
         end_date = end_time.date()
         
-        self.logger.info(f"分析时间范围: {start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')} ({hours_back}小时)")
+        # 转换为本地时间显示
+        local_start_time = start_time.astimezone()
+        local_end_time = end_time.astimezone()
+        self.logger.info(f"分析时间范围: {local_start_time.strftime('%Y-%m-%d %H:%M')} 到 {local_end_time.strftime('%Y-%m-%d %H:%M')} ({hours_back}小时)")
         
         # 🎯 按平台独立分析 - 单独处理每个平台的数据
         platform_results = {}
@@ -457,11 +460,20 @@ class TDXAgent:
             platform_results = analysis_results['platform_analysis']
             
             
-            # Generate individual platform reports
+            # Generate individual platform reports and collect all platform info
             self.logger.debug(f"开始生成 {len(platform_results)} 个平台的报告")
+            all_platform_info = {}  # Store both successful and failed platform info
+            
             for platform, platform_result in platform_results.items():
                 if not platform_result.get('batch_result') or not platform_result['batch_result'].summaries:
                     self.logger.warning(f"No analysis summaries available for {platform}")
+                    # Store failed platform info
+                    error_msg = platform_result.get('error', 'Analysis failed or no summaries available')
+                    all_platform_info[platform] = {
+                        'status': 'failed',
+                        'error': error_msg,
+                        'report_path': None
+                    }
                     continue
                 
                 self.logger.debug(f"正在生成 {platform} 平台报告...")
@@ -477,15 +489,34 @@ class TDXAgent:
                 
                 if platform_path:
                     report_paths.append(platform_path)
+                    all_platform_info[platform] = {
+                        'status': 'success',
+                        'report_path': platform_path,
+                        'error': None
+                    }
                     self.logger.debug(f"✅ {platform} 平台报告已生成: {Path(platform_path).name}")
                     # Note: ReportGenerator already logs the generation success
+                else:
+                    # Report generation failed
+                    all_platform_info[platform] = {
+                        'status': 'failed',
+                        'error': 'Report generation failed',
+                        'report_path': None
+                    }
             
-            # Generate consolidated report if multiple platforms have reports
-            if len(report_paths) > 1:
-                self.logger.info(f"生成多平台汇总报告，整合 {len(report_paths)} 个平台报告...")
+            # Generate consolidated report if any platforms were processed (successful or failed)
+            if all_platform_info:
+                total_platforms = len(all_platform_info)
+                successful_platforms = len(report_paths)
+                failed_platforms = total_platforms - successful_platforms
                 
-                # 生成汇总报告：简单地用 --- 分割各平台报告内容
-                consolidated_path = await self._generate_consolidated_report(report_paths, hours_back)
+                if failed_platforms > 0:
+                    self.logger.info(f"生成汇总报告，整合 {successful_platforms} 个成功平台报告和 {failed_platforms} 个失败平台信息...")
+                else:
+                    self.logger.info(f"生成汇总报告，整合 {successful_platforms} 个平台报告...")
+                
+                # 生成汇总报告：包含成功和失败平台的信息
+                consolidated_path = await self._generate_consolidated_report(all_platform_info, hours_back)
                 
                 if consolidated_path:
                     # 根据配置决定是否删除单独的平台报告文件
@@ -509,36 +540,48 @@ class TDXAgent:
                         report_paths.append(consolidated_path)
                         self.logger.info(f"已生成汇总报告并保留分平台报告: {Path(consolidated_path).name}")
             else:
-                self.logger.info(f"跳过汇总报告生成: 只有 {len(report_paths)} 个平台报告")
+                self.logger.warning(f"无平台报告可生成汇总: {len(report_paths)} 个平台报告")
             
         except Exception as e:
             self.logger.error(f"Failed to generate reports: {e}")
         
         return report_paths
     
-    async def _generate_consolidated_report(self, platform_report_paths: List[str], hours_back: int = None) -> str:
+    async def _generate_consolidated_report(self, all_platform_info: Dict[str, Dict], hours_back: int = None) -> str:
         """
-        生成简单的汇总报告：将各平台报告用 --- 分割整合到一个文件
+        生成汇总报告：包含成功平台报告和失败平台错误信息
         
         Args:
-            platform_report_paths: 各平台报告文件路径列表
+            all_platform_info: 所有平台信息字典 {platform: {'status': 'success'|'failed', 'report_path': str|None, 'error': str|None}}
             hours_back: 小时数（用于文件名）
             
         Returns:
             汇总报告文件路径
         """
         try:
-            # 读取所有平台报告内容
+            # 处理所有平台信息，包含成功和失败的平台
             all_contents = []
             
-            for report_path in platform_report_paths:
-                try:
-                    with open(report_path, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
-                        all_contents.append(content)
-                except Exception as e:
-                    self.logger.warning(f"读取报告失败 {report_path}: {e}")
-                    continue
+            # 按平台名称排序，确保输出顺序一致
+            for platform in sorted(all_platform_info.keys()):
+                platform_info = all_platform_info[platform]
+                
+                if platform_info['status'] == 'success' and platform_info['report_path']:
+                    # 成功的平台：读取报告文件内容
+                    try:
+                        with open(platform_info['report_path'], 'r', encoding='utf-8') as f:
+                            content = f.read().strip()
+                            all_contents.append(content)
+                    except Exception as e:
+                        self.logger.warning(f"读取 {platform} 报告失败: {e}")
+                        # 如果读取失败，生成错误信息
+                        error_content = self._generate_failed_platform_section(platform, f"报告文件读取失败: {e}")
+                        all_contents.append(error_content)
+                
+                elif platform_info['status'] == 'failed':
+                    # 失败的平台：生成错误信息段落
+                    error_content = self._generate_failed_platform_section(platform, platform_info['error'])
+                    all_contents.append(error_content)
             
             if not all_contents:
                 self.logger.error("没有可用的平台报告内容")
@@ -660,6 +703,105 @@ class TDXAgent:
                 self.console.print(f"  • {Path(path).name}")
         
         self.console.print(Panel.fit("✨ TDXAgent 流程执行完成!", style="bold green"))
+    
+    def _generate_failed_platform_section(self, platform: str, error_message: str) -> str:
+        """
+        为失败的平台生成错误信息段落
+        
+        Args:
+            platform: 平台名称
+            error_message: 错误信息
+            
+        Returns:
+            格式化的错误信息段落
+        """
+        # 生成时间戳
+        timestamp = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+        
+        # 平台名称映射
+        platform_names = {
+            'twitter': 'Twitter/X',
+            'telegram': 'Telegram',
+            'discord': 'Discord',
+            'gmail': 'Gmail'
+        }
+        platform_display_name = platform_names.get(platform.lower(), platform.capitalize())
+        
+        # 检查是否是认证错误
+        is_auth_error = any(keyword in error_message.lower() 
+                          for keyword in ['authenticate', 'auth', 'user code', 'login', 'credential'])
+        
+        if is_auth_error:
+            error_section = f"""# {platform_display_name} 平台分析报告
+
+## ⚠️ 分析失败 - 认证错误
+
+**生成时间**: {timestamp}
+
+**错误类型**: 平台认证失败
+
+**详细信息**: {error_message}
+
+**解决方案**:
+- 请检查 {platform_display_name} 平台的认证配置
+- 可能需要重新进行平台认证
+- 对于Gemini CLI，请运行 `gemini auth` 重新认证
+- 对于其他平台，请查看相关认证文档
+
+**数据收集状态**: 无法访问平台数据
+
+**分析结果**: 由于认证失败，无法进行投资分析
+
+---
+
+💡 **提示**: 认证问题解决后，请重新运行分析命令获取完整报告。"""
+        else:
+            error_section = f"""# {platform_display_name} 平台分析报告
+
+## ❌ 分析失败
+
+**生成时间**: {timestamp}
+
+**错误类型**: 分析处理失败
+
+**详细信息**: {error_message}
+
+**可能原因**:
+- 平台数据处理异常
+- AI分析服务临时不可用
+- 数据格式或质量问题
+- 系统资源不足
+
+**数据收集状态**: 可能有数据但分析失败
+
+**分析结果**: 无法生成投资分析
+
+---
+
+💡 **提示**: 请检查系统日志获取详细错误信息，或稍后重新尝试分析。"""
+        
+        return error_section
+    
+    def _log_task_summary(self, task_type: str, **kwargs) -> None:
+        """
+        Log task execution summary with grep-friendly format.
+        
+        Args:
+            task_type: COLLECT or ANALYZE
+            **kwargs: Task-specific parameters
+        """
+        # Create a standardized log entry format
+        summary_parts = [f"[TASK_SUMMARY] {task_type}"]
+        
+        # Add key-value pairs
+        for key, value in kwargs.items():
+            if value is not None:
+                summary_parts.append(f"{key}={value}")
+        
+        summary_line = " | ".join(summary_parts)
+        
+        # Log at INFO level to ensure visibility
+        self.logger.info(summary_line)
 
 
 # CLI Interface
@@ -679,9 +821,68 @@ def cli(ctx, config):
 def collect(ctx, hours, platforms):
     """收集社交媒体数据"""
     async def run():
+        import time
+        start_time = time.time()
+        
         agent = TDXAgent(ctx.obj['config'])
         platform_list = platforms.split(',') if platforms else None
         results = await agent.run_collection(hours, platform_list)
+        
+        # Calculate execution time
+        duration = int(time.time() - start_time)
+        
+        # Calculate summary statistics
+        total_messages = 0
+        platform_breakdown = []
+        error_count = 0
+        successful_platforms = []
+        failed_platforms = []
+        auth_failed_platforms = []
+        
+        for platform, result in results.items():
+            if isinstance(result, dict):
+                if 'error' in result:
+                    error_count += 1
+                    failed_platforms.append(platform)
+                    # Check for authentication errors
+                    error_msg = result.get('error', '').lower()
+                    if 'authentication failed' in error_msg or 'authenticate' in error_msg or 'auth' in error_msg:
+                        auth_failed_platforms.append(platform)
+                elif 'stored_messages' in result:
+                    messages_count = result['stored_messages']
+                    total_messages += messages_count
+                    platform_breakdown.append(f"{platform}:{messages_count}")
+                    successful_platforms.append(platform)
+        
+        # Determine overall status
+        status = "SUCCESS" if error_count == 0 else "PARTIAL" if successful_platforms else "FAILED"
+        
+        # Log task summary with enhanced error information
+        summary_params = {
+            "platforms": ",".join(platform_list) if platform_list else "all",
+            "hours": hours,
+            "total_messages": total_messages,
+            "platform_breakdown": ",".join(platform_breakdown) if platform_breakdown else "none",
+            "status": status,
+            "duration": f"{duration}s",
+            "errors": error_count
+        }
+        
+        # Add failed platform information
+        if failed_platforms:
+            summary_params["failed_platforms"] = ",".join(failed_platforms)
+        
+        # Add authentication failure information
+        if auth_failed_platforms:
+            summary_params["auth_failed"] = ",".join(auth_failed_platforms)
+        
+        agent._log_task_summary("COLLECT", **summary_params)
+        
+        # Display authentication warnings to user
+        if auth_failed_platforms:
+            agent.console.print(f"[bold red]⚠️  认证失败平台: {', '.join(auth_failed_platforms)}[/bold red]")
+            agent.console.print("[yellow]请运行相应平台的认证命令重新进行认证[/yellow]")
+        
         return results
     
     asyncio.run(run())
@@ -694,6 +895,9 @@ def collect(ctx, hours, platforms):
 def analyze(ctx, hours, platforms):
     """分析收集的数据并生成报告"""
     async def run():
+        import time
+        start_time = time.time()
+        
         agent = TDXAgent(ctx.obj['config'])
         platform_list = platforms.split(',') if platforms else None
         
@@ -703,6 +907,61 @@ def analyze(ctx, hours, platforms):
         # 生成报告
         report_paths = await agent.generate_reports(analysis_results, hours)
         
+        # Calculate execution time
+        duration = int(time.time() - start_time)
+        
+        # Calculate summary statistics
+        total_messages = 0
+        platform_breakdown = []
+        error_count = 0
+        successful_platforms = []
+        failed_platforms = []
+        auth_failed_platforms = []
+        total_batches = 0
+        
+        if 'error' in analysis_results:
+            error_count = 1
+            status = "FAILED"
+        elif 'platform_analysis' in analysis_results:
+            # Process platform analysis results
+            for platform, result in analysis_results['platform_analysis'].items():
+                if isinstance(result, dict):
+                    if 'error' in result:
+                        error_count += 1
+                        failed_platforms.append(platform)
+                        # Check for authentication errors
+                        error_msg = result.get('error', '').lower()
+                        if 'authenticate' in error_msg or 'auth' in error_msg or 'user code' in error_msg:
+                            auth_failed_platforms.append(platform)
+                    else:
+                        # Check if batch_result is None or failed
+                        batch_result = result.get('batch_result')
+                        if batch_result is None or (hasattr(batch_result, 'success') and not batch_result.success):
+                            error_count += 1
+                            failed_platforms.append(platform)
+                            # Check for authentication errors in batch result
+                            if batch_result and hasattr(batch_result, 'error_message'):
+                                error_msg = batch_result.error_message.lower()
+                                if 'authenticate' in error_msg or 'auth' in error_msg or 'user code' in error_msg:
+                                    auth_failed_platforms.append(platform)
+                        else:
+                            messages_count = result.get('total_messages_analyzed', 0)
+                            total_messages += messages_count
+                            platform_breakdown.append(f"{platform}:{messages_count}")
+                            successful_platforms.append(platform)
+                            
+                            # Count batches if available
+                            if batch_result and hasattr(batch_result, 'batch_details'):
+                                total_batches += len(batch_result.batch_details)
+            
+            # Update from global total if available
+            if 'total_messages_analyzed' in analysis_results:
+                total_messages = analysis_results['total_messages_analyzed']
+            
+            status = "SUCCESS" if error_count == 0 else "PARTIAL" if successful_platforms else "FAILED"
+        else:
+            status = "FAILED"
+        
         # 显示结果
         if report_paths:
             agent.console.print(f"\n📄 生成了 {len(report_paths)} 个报告:")
@@ -710,6 +969,34 @@ def analyze(ctx, hours, platforms):
                 agent.console.print(f"  • {Path(path).name}")
         else:
             agent.console.print("❌ 没有生成报告")
+        
+        # Log task summary with enhanced error information
+        summary_params = {
+            "platforms": ",".join(platform_list) if platform_list else "all",
+            "hours": hours,
+            "total_messages": total_messages,
+            "platform_breakdown": ",".join(platform_breakdown) if platform_breakdown else "none",
+            "batches": total_batches if total_batches > 0 else "unknown",
+            "reports": len(report_paths) if report_paths else 0,
+            "status": status,
+            "duration": f"{duration}s",
+            "errors": error_count
+        }
+        
+        # Add failed platform information
+        if failed_platforms:
+            summary_params["failed_platforms"] = ",".join(failed_platforms)
+        
+        # Add authentication failure information
+        if auth_failed_platforms:
+            summary_params["auth_failed"] = ",".join(auth_failed_platforms)
+        
+        agent._log_task_summary("ANALYZE", **summary_params)
+        
+        # Display authentication warnings to user
+        if auth_failed_platforms:
+            agent.console.print(f"[bold red]⚠️  认证失败平台: {', '.join(auth_failed_platforms)}[/bold red]")
+            agent.console.print("[yellow]请检查相关平台的认证配置，可能需要重新认证[/yellow]")
         
         return {'analysis_results': analysis_results, 'report_paths': report_paths}
     
