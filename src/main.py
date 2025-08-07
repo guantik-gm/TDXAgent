@@ -736,13 +736,8 @@ def analyze(ctx, hours, platforms):
                 
                 if has_successful_batches and has_summaries and has_no_critical_errors:
                     status = "SUCCESS"
-                    # 计算批次数量
-                    if hasattr(unified_result, 'batch_details') and unified_result.batch_details:
-                        total_batches = len(unified_result.batch_details)
-                    elif unified_result.summaries:
-                        total_batches = len(unified_result.summaries)
-                    else:
-                        total_batches = unified_result.successful_batches
+                    # 🎯 修复：使用正确的批次统计方式，与BatchProcessor保持一致
+                    total_batches = unified_result.successful_batches + unified_result.failed_batches
                 else:
                     error_count = 1
                     status = "FAILED"

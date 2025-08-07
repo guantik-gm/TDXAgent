@@ -309,9 +309,14 @@ class BatchProcessor:
         end_time = datetime.now()
         processing_time = (end_time - start_time).total_seconds()
         
-        # Count successful and failed batches from integration result
-        successful_batches = len(batches) if final_result.success else 0
-        failed_batches = len(batches) - successful_batches
+        # 🎯 修复：正确统计实际的批次执行结果
+        # 基于最终结果是否成功来统计：最终成功表示所有批次都处理完成
+        if final_result.success:
+            successful_batches = len(batches)  # 所有批次都成功处理
+            failed_batches = 0  # 没有真正失败的批次
+        else:
+            successful_batches = 0  # 整体失败，没有成功批次  
+            failed_batches = 1  # 至少有一个失败导致整体失败
         
         batch_result = BatchResult(
             platform=platform,
