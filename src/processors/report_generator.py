@@ -129,7 +129,7 @@ class ReportGenerator:
             report_content = self._generate_unified_content(batch_result, platforms_included, total_messages)
             
             # Create filename with unified format
-            filename = self._generate_filename("统一多平台分析报告")
+            filename = self._generate_filename("TDXAgent分析报告")
             
             # Create date-based subdirectory
             report_date = datetime.now()
