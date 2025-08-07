@@ -978,6 +978,46 @@ class BatchProcessor:
             processing_time = time.time() - start_time
             
             if response.success:
+                # 创建批次详情用于质量检查
+                batch_detail = BatchExecutionDetail(
+                    batch_number=1,
+                    message_count=total_messages,
+                    tokens_used=response.token_count,
+                    processing_time=processing_time,
+                    success=True,
+                    response_content=response.content,
+                    command_type="process_single_tagged_batch",
+                    llm_command=getattr(response, 'call_command', 'unknown'),
+                    llm_provider=self.llm_provider.provider_name,
+                    model_name=getattr(response, 'model', 'unknown')
+                )
+                
+                # 检查响应内容质量
+                if not batch_detail.has_meaningful_content:
+                    self.logger.warning("统一分析批次返回内容质量不佳或无有效结果")
+                    # 记录响应内容用于调试
+                    if len(response.content) > 1000:
+                        self.logger.warning(f"问题响应内容 (前1000字符): {response.content[:1000]}...")
+                        self.logger.warning(f"问题响应内容 (后500字符): ...{response.content[-500:]}")
+                    else:
+                        self.logger.warning(f"问题响应完整内容: {response.content}")
+                    
+                    # 返回失败结果
+                    return BatchResult(
+                        platform="unified", 
+                        total_messages=total_messages,
+                        processed_messages=0,
+                        successful_batches=0,
+                        failed_batches=1,
+                        total_tokens_used=response.token_count,
+                        total_cost=response.cost,
+                        processing_time=processing_time,
+                        summaries=[],
+                        errors=["AI返回内容无有效结果或质量不佳"],
+                        batch_details=[batch_detail]
+                    )
+                
+                # 内容质量良好，返回成功结果
                 return BatchResult(
                     platform="unified",
                     total_messages=total_messages,
@@ -988,9 +1028,24 @@ class BatchProcessor:
                     total_cost=response.cost,
                     processing_time=processing_time,
                     summaries=[response.content],
-                    errors=[]
+                    errors=[],
+                    batch_details=[batch_detail]
                 )
             else:
+                # LLM 调用失败
+                batch_detail = BatchExecutionDetail(
+                    batch_number=1,
+                    message_count=total_messages,
+                    tokens_used=0,
+                    processing_time=processing_time,
+                    success=False,
+                    error_message=response.error_message or "LLM processing failed",
+                    command_type="process_single_tagged_batch",
+                    llm_command=getattr(response, 'call_command', 'unknown'),
+                    llm_provider=self.llm_provider.provider_name,
+                    model_name=getattr(response, 'model', 'unknown')
+                )
+                
                 return BatchResult(
                     platform="unified", 
                     total_messages=total_messages,
@@ -1001,7 +1056,8 @@ class BatchProcessor:
                     total_cost=0.0,
                     processing_time=processing_time,
                     summaries=[],
-                    errors=[response.error_message or "LLM processing failed"]
+                    errors=[response.error_message or "LLM processing failed"],
+                    batch_details=[batch_detail]
                 )
                 
         except Exception as e:
