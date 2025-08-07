@@ -1182,15 +1182,44 @@ class BatchProcessor:
         return batches
 
     def _format_batch_with_platform_tags(self, platform_messages: Dict[str, List]) -> str:
-        """为批次生成带平台标签的数据格式"""
+        """为批次生成带平台标签的数据格式 - 优化多平台平衡分析"""
         from utils.link_generator import LinkGenerator
+        import random
         
-        platform_sections = []
-        platform_order = ['twitter', 'telegram', 'gmail', 'discord'] 
+        # 🎯 策略1：动态平台排序 - 数据量少的平台优先（确保被关注）
+        platform_stats = []
+        for platform in ['twitter', 'telegram', 'gmail', 'discord']:
+            if platform in platform_messages and platform_messages[platform]:
+                count = len(platform_messages[platform])
+                platform_stats.append((platform, count))
         
-        # 不需要引用格式示例 - 统一格式化已处理
+        # 按数据量升序排序（少的在前面），添加小随机性避免完全固定
+        random.seed(42)  # 固定种子确保可重复性
+        platform_stats.sort(key=lambda x: (x[1], random.random()))
+        platform_order = [p[0] for p in platform_stats]
         
+        # 🎯 策略2：添加平台数据统计摘要，明确告知LLM各平台重要性
+        total_messages = sum(len(msgs) for msgs in platform_messages.values())
+        stats_summary = ["📊 **多平台数据统计** (请确保每个平台都获得分析关注):"]
+        
+        platform_display = {
+            'twitter': '🐦 Twitter/X', 
+            'telegram': '✈️ Telegram', 
+            'gmail': '📧 Gmail', 
+            'discord': '💬 Discord'
+        }
+        
+        for platform, count in platform_stats:
+            percentage = (count / total_messages * 100) if total_messages > 0 else 0
+            stats_summary.append(f"- {platform_display.get(platform, platform.title())}: {count} 条消息 ({percentage:.1f}%)")
+        
+        stats_summary.append("")
+        stats_summary.append("⚠️ **平台平衡分析要求**: 请在最终分析中平衡引用各个平台的内容，确保数据量较少的平台也获得适当关注和引用。")
+        stats_section = "\n".join(stats_summary)
+        
+        # 🎯 策略3：增强平台数据格式，突出平台标识和数据量
         link_generator = LinkGenerator()
+        platform_sections = []
         
         for platform in platform_order:
             messages = platform_messages.get(platform, [])
@@ -1198,19 +1227,23 @@ class BatchProcessor:
             if messages:
                 # 格式化消息数据
                 formatted_data = link_generator.format_messages_unified(messages)
+                display_name = platform_display.get(platform, platform.title())
+                
                 platform_section = f"""<{platform}_data>
-=== {platform.title()} 数据 ===
+=== {display_name} 平台数据 ({len(messages)} 条消息) ===
 
 {formatted_data}
 </{platform}_data>"""
             else:
+                display_name = platform_display.get(platform, platform.title())
                 platform_section = f"""<{platform}_data>
-暂无{platform.title()}数据
+=== 暂无 {display_name} 数据 ===
 </{platform}_data>"""
             
             platform_sections.append(platform_section)
         
-        return "\n\n".join(platform_sections)
+        # 将统计摘要放在数据前面，引导LLM注意平台平衡
+        return f"{stats_section}\n\n" + "\n\n".join(platform_sections)
 
     def _create_empty_batch_result(self, platform: str) -> BatchResult:
         """创建空的批次结果"""
