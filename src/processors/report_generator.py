@@ -97,96 +97,6 @@ class ReportGenerator:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
     
-    async def generate_summary_report(self, 
-                                    platform_results: Dict[str, BatchResult],
-                                    report_title: str = "TDXAgent 数据分析报告",
-                                    start_time: Optional[datetime] = None,
-                                    hours_back: Optional[int] = None) -> str:
-        """
-        Generate a comprehensive summary report.
-        
-        Args:
-            platform_results: Dictionary of platform -> BatchResult
-            report_title: Title for the report
-            start_time: Program start time (overrides instance value if provided)
-            hours_back: Hours of data collected (overrides instance value if provided)
-            
-        Returns:
-            Path to generated report file
-        """
-        try:
-            # Update timing parameters if provided
-            if start_time:
-                self.start_time = start_time
-            if hours_back is not None:
-                self.hours_back = hours_back
-                
-            await ensure_directory_async(self.output_directory)
-            
-            # Generate report content
-            report_content = await self._generate_summary_content(platform_results, report_title)
-            
-            # Create filename with new format
-            filename = self._generate_filename("Summary_Report")
-            report_path = self.output_directory / filename
-            
-            # Write report
-            await asyncio.to_thread(self._write_file, report_path, report_content)
-            
-            self.logger.info(f"Generated summary report: {report_path}")
-            return str(report_path)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate summary report: {e}")
-            raise
-    
-    async def generate_platform_report(self, 
-                                     platform: str,
-                                     batch_result: BatchResult,
-                                     messages: List[Dict[str, Any]],
-                                     all_platform_results: Optional[Dict[str, BatchResult]] = None,
-                                     start_time: Optional[datetime] = None,
-                                     hours_back: Optional[int] = None) -> str:
-        """
-        Generate a platform-specific detailed report.
-        
-        Args:
-            platform: Platform name
-            batch_result: Batch processing result
-            messages: Original messages
-            all_platform_results: All platform results for summary section (optional)
-            start_time: Program start time (overrides instance value if provided)
-            hours_back: Hours of data collected (overrides instance value if provided)
-            
-        Returns:
-            Path to generated report file
-        """
-        try:
-            # Update timing parameters if provided
-            if start_time:
-                self.start_time = start_time
-            if hours_back is not None:
-                self.hours_back = hours_back
-                
-            await ensure_directory_async(self.output_directory)
-            
-            # Generate report content
-            report_content = self._generate_platform_content(platform, batch_result, messages, all_platform_results)
-            
-            # Create filename with new format
-            filename = self._generate_filename(f"{platform.title()}_Report")
-            report_path = self.output_directory / filename
-            
-            # Write report
-            await asyncio.to_thread(self._write_file, report_path, report_content)
-            
-            self.logger.info(f"Generated {platform} report: {report_path}")
-            return str(report_path)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate {platform} report: {e}")
-            raise
-    
     async def generate_unified_report(self, 
                                     batch_result: BatchResult,
                                     platforms_included: List[str],
@@ -220,7 +130,14 @@ class ReportGenerator:
             
             # Create filename with unified format
             filename = self._generate_filename("统一多平台分析报告")
-            report_path = self.output_directory / filename
+            
+            # Create date-based subdirectory
+            report_date = datetime.now()
+            date_folder = report_date.strftime("%Y%m%d")
+            date_directory = self.output_directory / date_folder
+            await ensure_directory_async(date_directory)
+            
+            report_path = date_directory / filename
             
             # Write report
             await asyncio.to_thread(self._write_file, report_path, report_content)
@@ -269,7 +186,14 @@ class ReportGenerator:
             
             # Create filename with error format
             filename = self._generate_filename("分析错误报告")
-            report_path = self.output_directory / filename
+            
+            # Create date-based subdirectory
+            report_date = datetime.now()
+            date_folder = report_date.strftime("%Y%m%d")
+            date_directory = self.output_directory / date_folder
+            await ensure_directory_async(date_directory)
+            
+            report_path = date_directory / filename
             
             # Write report
             await asyncio.to_thread(self._write_file, report_path, report_content)
@@ -281,233 +205,6 @@ class ReportGenerator:
             self.logger.error(f"Failed to generate error report: {e}")
             # Don't raise here - we don't want to fail the error report generation
             return None
-    
-    async def _generate_summary_content(self, 
-                                      platform_results: Dict[str, BatchResult],
-                                      report_title: str) -> str:
-        """Generate summary report content."""
-        
-        # Calculate overall statistics
-        total_messages = sum(result.total_messages for result in platform_results.values())
-        total_processed = sum(result.processed_messages for result in platform_results.values())
-        total_tokens = sum(result.total_tokens_used for result in platform_results.values())
-        total_cost = sum(result.total_cost for result in platform_results.values())
-        total_time = sum(result.processing_time for result in platform_results.values())
-        
-        # Generate timestamp
-        report_time = format_timestamp(format_type="human")
-        
-        # Start building report
-        content = f"""# {report_title}
-
-**生成时间**: {report_time}
-
-## 📊 总体统计
-
-- **总消息数**: {total_messages:,}
-- **已处理消息**: {total_processed:,}
-- **处理成功率**: {(total_processed/total_messages*100) if total_messages > 0 else 0:.1f}%
-- **使用 Token 数**: {total_tokens:,}
-- **估算成本**: ${total_cost:.4f}
-- **处理时间**: {total_time:.1f} 秒
-
-## 🌐 平台概览
-
-"""
-        
-        # Add platform-specific sections
-        successful_platforms = []
-        failed_platforms = []
-        
-        for platform, result in platform_results.items():
-            if result is None:
-                failed_platforms.append(platform)
-                content += f"""### {self._get_platform_display_name(platform)}
-
-- **状态**: ❌ **处理失败**
-- **原因**: 平台处理完全失败，未返回结果
-
-"""
-                continue
-                
-            platform_name = self._get_platform_display_name(platform)
-            success_rate = result.success_rate
-            
-            # 检查是否有有效的分析结果
-            has_valid_analysis = result.summaries and any(summary.strip() for summary in result.summaries)
-            
-            if has_valid_analysis:
-                successful_platforms.append(platform)
-                status_icon = "✅"
-                status_text = "处理成功"
-            else:
-                failed_platforms.append(platform)
-                status_icon = "⚠️"
-                status_text = "分析失败"
-            
-            content += f"""### {platform_name}
-
-- **状态**: {status_icon} **{status_text}**
-- **消息数量**: {result.total_messages:,}
-- **处理成功**: {result.processed_messages:,}
-- **成功率**: {success_rate:.1f}%
-- **Token 使用**: {result.total_tokens_used:,}
-- **处理时间**: {result.processing_time:.1f}s
-
-"""
-            
-            # Add AI analysis summary if available
-            if has_valid_analysis:
-                content += "**AI 分析摘要**:\n\n"
-                # Since we now have integrated results, show the full summary
-                summary = result.summaries[0]  # Only one integrated summary
-                preview = summary[:300] + '...' if len(summary) > 300 else summary
-                content += f"{preview}\n\n"
-            else:
-                # 添加失败原因说明
-                if result.errors:
-                    content += f"**失败原因**: {'; '.join(result.errors)}\n\n"
-                else:
-                    content += f"**失败原因**: AI响应质量不佳，可能包含系统消息或无效内容\n\n"
-        
-        # 添加失败平台的汇总说明
-        if failed_platforms:
-            content += f"""
-## ⚠️ 处理问题汇总
-
-以下平台在分析过程中遇到问题：
-
-"""
-            for platform in failed_platforms:
-                result = platform_results.get(platform)
-                if result is None:
-                    content += f"- **{self._get_platform_display_name(platform)}**: 平台处理完全失败，未返回结果\n"
-                elif result.errors:
-                    content += f"- **{self._get_platform_display_name(platform)}**: {'; '.join(result.errors)}\n"
-                else:
-                    content += f"- **{self._get_platform_display_name(platform)}**: AI响应质量检测失败，可能包含系统消息或无效内容\n"
-            
-            content += f"\n**建议**: 检查网络连接、API配置，或稍后重试分析。如问题持续，可能是AI模型暂时不稳定。\n\n"
-
-        # 添加综合AI分析结果
-        content += """## 🤖 AI 分析结果
-
-"""
-        
-        # 检查是否有任何有效的分析结果
-        has_any_valid_analysis = False
-        for platform, result in platform_results.items():
-            if result and result.summaries and any(summary.strip() for summary in result.summaries):
-                has_any_valid_analysis = True
-                content += f"""### AI 综合分析
-
-"""
-                # 显示分析摘要
-                for summary in result.summaries:
-                    if summary.strip():  # 只显示非空摘要
-                        content += f"{summary}\n\n"
-                break  # 只显示第一个有效的分析结果
-        
-        if not has_any_valid_analysis:
-            content += "**⚠️ 暂无有效的AI分析结果**\n\n"
-            if failed_platforms:
-                platform_names = [self._get_platform_display_name(p) for p in failed_platforms]
-                if len(failed_platforms) == len(platform_results):
-                    content += f"**原因**: 所有平台 ({', '.join(platform_names)}) 的AI分析都未能产生有效结果。\n\n"
-                else:
-                    content += f"**原因**: 部分平台 ({', '.join(platform_names)}) 的AI分析未能产生有效结果。\n\n"
-        
-        # Add error summary if any
-        all_errors = []
-        for result in platform_results.values():
-            if result:  # 检查result不为None
-                all_errors.extend(result.errors)
-        
-        if all_errors:
-            content += f"""## ⚠️ 错误报告
-
-处理过程中遇到 {len(all_errors)} 个错误:
-
-"""
-            for i, error in enumerate(all_errors[:5], 1):  # Show first 5 errors
-                content += f"{i}. {error}\n"
-            
-            if len(all_errors) > 5:
-                content += f"\n... 还有 {len(all_errors) - 5} 个错误\n"
-        
-        # Add footer
-        content += f"""
----
-
-*报告由 TDXAgent 自动生成 - {report_time}*
-"""
-        
-        return content
-    
-    def _generate_platform_content(self, 
-                                   platform: str,
-                                   batch_result: BatchResult,
-                                   messages: List[Dict[str, Any]],
-                                   all_platform_results: Optional[Dict[str, BatchResult]] = None) -> str:
-        """Generate platform-specific report content."""
-        
-        platform_name = self._get_platform_display_name(platform)
-        report_time = format_timestamp(format_type="human")
-        
-        content = f"""# TDXAgent {platform_name} 数据分析报告
-
-**生成时间**: {report_time}
-
-## 📈 {platform_name} 处理统计
-
-"""
-        
-        content += f"""- **总消息数**: {batch_result.total_messages:,}
-- **成功处理**: {batch_result.processed_messages:,}
-- **处理成功率**: {batch_result.success_rate:.1f}%
-- **批次数量**: {batch_result.successful_batches + batch_result.failed_batches}
-- **成功批次**: {batch_result.successful_batches}
-- **失败批次**: {batch_result.failed_batches}
-- **Token 使用**: {batch_result.total_tokens_used:,}
-- **平均每批次 Token**: {batch_result.average_tokens_per_batch:.0f}
-- **处理时间**: {batch_result.processing_time:.1f} 秒
-- **估算成本**: ${batch_result.total_cost:.4f}
-
-## 🤖 AI 分析结果
-
-"""
-        
-        # Add integrated AI analysis result
-        if batch_result.summaries:
-            content += f"""### AI 综合分析
-
-"""
-            # 显示所有平台的分析摘要
-            for summary in batch_result.summaries:
-                content += f"{summary}\n\n"
-        else:
-            content += "暂无 AI 分析结果。\n\n"
-        
-        # 简化设计：移除复杂的引用统计和消息样本，AI分析结果中的引用链接已足够
-        
-        # Add platform-specific error details if any
-        if batch_result.errors:
-            content += f"""## ⚠️ 错误详情
-
-处理过程中遇到以下错误：
-
-"""
-            for i, error in enumerate(batch_result.errors, 1):
-                content += f"{i}. {error}\n"
-        
-        # Add footer
-        content += f"""
----
-
-*报告由 TDXAgent 自动生成 - {report_time}*
-"""
-        
-        return content
     
     def _generate_unified_content(self, 
                                  batch_result: BatchResult,
@@ -521,8 +218,7 @@ class ReportGenerator:
         platform_names = [self._get_platform_display_name(p) for p in platforms_included]
         platforms_display = "、".join(platform_names)
         
-        content = f"""# TDXAgent 统一多平台分析报告
-
+        content = f"""
 **生成时间**: {report_time}  
 **数据范围**: 最近 {self.hours_back or 'N/A'} 小时  
 **分析模式**: 统一多平台分析
@@ -734,137 +430,6 @@ class ReportGenerator:
             self.logger.error(f"Failed to cleanup reports: {e}")
         
         return removed_count
-    
-    async def generate_cross_platform_report(self, 
-                                           analysis_result: Dict[str, Any],
-                                           report_title: str = "TDXAgent 跨平台主题整合报告",
-                                           start_time: Optional[datetime] = None,
-                                           hours_back: Optional[int] = None) -> str:
-        """
-        生成跨平台主题整合报告。
-        
-        Args:
-            analysis_result: 跨平台分析结果
-            report_title: 报告标题
-            start_time: 开始时间
-            hours_back: 分析的小时数
-            
-        Returns:
-            生成的报告文件路径
-        """
-        batch_result = analysis_result['batch_result']
-        total_messages = analysis_result['total_messages_analyzed']
-        platforms_included = analysis_result['platforms_included']
-        platform_counts = analysis_result['platform_message_counts']
-        
-        # 生成报告时间（使用本地时间）
-        if start_time is None:
-            report_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            # 如果start_time是UTC时间，转换为本地时间显示
-            local_time = start_time.astimezone() if start_time.tzinfo else start_time
-            report_time = local_time.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 确定时间期间描述
-        if hours_back:
-            if hours_back == 12:
-                period_desc = "最近12小时"
-            elif hours_back == 24:
-                period_desc = "最近1天"
-            elif hours_back == 168:  # 7*24
-                period_desc = "最近1周"
-            elif hours_back < 24:
-                period_desc = f"最近{hours_back}小时"
-            elif hours_back % 24 == 0:
-                days = hours_back // 24
-                period_desc = f"最近{days}天"
-            else:
-                period_desc = f"最近{hours_back}小时"
-        else:
-            period_desc = "指定时间段"
-        
-        # 构建跨平台报告内容
-        content = f"""# {report_title}
-
-**生成时间**: {report_time}  
-**数据期间**: {period_desc}
-
-## 📊 跨平台数据概览
-
-| 指标 | 数值 |
-|------|------|
-| 📄 **总消息数** | {total_messages:,} 条 |
-| 🌐 **涵盖平台数** | {len(platforms_included)} 个 |
-| ✅ **处理成功** | {batch_result.processed_messages:,} 条 |
-| 🎯 **处理成功率** | {batch_result.success_rate:.1f}% |
-| 🤖 **Token使用量** | {batch_result.total_tokens_used:,} |
-| 💰 **估算成本** | ${batch_result.total_cost:.4f} |
-| ⚡ **处理耗时** | {batch_result.processing_time:.1f} 秒 |
-
-### 📱 平台数据分布
-
-| 平台 | 消息数量 | 占比 |
-|------|----------|------|
-"""
-        
-        # 添加平台分布统计
-        for platform in platforms_included:
-            count = platform_counts.get(platform, 0)
-            percentage = (count / total_messages * 100) if total_messages > 0 else 0
-            platform_name = self._get_platform_display_name(platform)
-            content += f"| {platform_name} | {count:,} 条 | {percentage:.1f}% |\n"
-        
-        content += "\n"
-        
-        # 添加主要的AI分析结果
-        if batch_result.summaries:
-            content += f"""## 🤖 跨平台主题整合分析
-
-"""
-            # 显示所有平台的分析摘要，而不只是第一个
-            for summary in batch_result.summaries:
-                content += f"{summary}\n\n"
-        
-        # 添加处理统计
-        content += f"""## 📈 处理统计详情
-
-- **分析模式**: 跨平台主题整合模式
-- **涵盖平台**: {', '.join([self._get_platform_display_name(p) for p in platforms_included])}
-- **数据完整性**: {batch_result.success_rate:.1f}% 
-- **处理批次**: {batch_result.successful_batches} 成功, {batch_result.failed_batches} 失败
-- **平均处理速度**: {total_messages / batch_result.processing_time:.1f} 条/秒
-
-"""
-        
-        
-        # 添加报告说明
-        content += f"""---
-
-## 📋 报告说明
-
-- **分析引擎**: 跨平台主题整合系统，按投资主题归纳多平台信息
-- **数据来源**: {', '.join([self._get_platform_display_name(p) for p in platforms_included])}
-- **引用追溯**: AI分析结果中的所有结论都可追溯到原始消息
-- **数据安全**: 所有数据完全本地处理，未上传任何第三方服务
-- **主题整合**: 自动识别跨平台相同主题信息并合并，避免重复分析
-
-*本报告由 TDXAgent 跨平台主题整合系统自动生成 - {report_time}*
-"""
-        
-        # 生成文件名和路径
-        timestamp = datetime.now().strftime("%Y年%m月%d日_%H时%M分")
-        filename = f"TDXAgent跨平台整合报告_{timestamp}_{period_desc}.md"
-        
-        output_path = self.output_directory / filename
-        
-        # 确保输出目录存在
-        await ensure_directory_async(self.output_directory)
-        
-        # 写入文件
-        await asyncio.to_thread(self._write_file, output_path, content)
-        
-        self.logger.info(f"Generated cross-platform report: {output_path}")
-        return str(output_path)
     
     def _add_batch_execution_details(self, content: str, platform_results: Dict[str, Any]) -> str:
         """
