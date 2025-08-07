@@ -291,10 +291,13 @@ class BatchProcessor:
                 errors=[]
             )
         
-        self.logger.info(f"Starting batch processing of {len(messages)} messages")
+        # 🔄 对输入的消息进行去重处理
+        deduplicated_messages = self._deduplicate_messages(messages, platform)
         
-        # Create intelligent batches
-        batches = self._create_intelligent_batches(messages, prompt_template)
+        self.logger.info(f"Starting batch processing of {len(deduplicated_messages)} messages (after deduplication)")
+        
+        # Create intelligent batches - 使用去重后的消息
+        batches = self._create_intelligent_batches(deduplicated_messages, prompt_template)
         self.logger.info(f"Created {len(batches)} batches for processing")
         
         # Process batches using simplified approach (without integration manager)
@@ -312,8 +315,8 @@ class BatchProcessor:
         
         batch_result = BatchResult(
             platform=platform,
-            total_messages=len(messages),
-            processed_messages=len(messages) if final_result.success else 0,
+            total_messages=len(deduplicated_messages),  # 使用去重后的数量
+            processed_messages=len(deduplicated_messages) if final_result.success else 0,  # 使用去重后的数量
             successful_batches=successful_batches,
             failed_batches=failed_batches,
             total_tokens_used=final_result.token_count if final_result.success else 0,
@@ -824,6 +827,97 @@ class BatchProcessor:
             'estimated_time_seconds': estimated_time
         }
     
+    def _deduplicate_messages(self, messages: List[Dict[str, Any]], platform: str = "unknown") -> List[Dict[str, Any]]:
+        """
+        对消息列表进行去重处理
+        
+        去重规则：
+        1. 有ID的消息：按ID去重，相同ID只保留第一条
+        2. 无ID的消息：全部保留（无法判断是否重复）
+        
+        Args:
+            messages: 消息列表
+            platform: 平台名称，用于日志记录
+            
+        Returns:
+            去重后的消息列表
+        """
+        if not messages:
+            return messages
+            
+        seen_ids = set()
+        unique_messages = []
+        duplicate_count = 0
+        no_id_count = 0
+        
+        for msg in messages:
+            msg_id = msg.get('id')
+            
+            if msg_id:
+                # 有ID的消息：检查是否重复
+                if msg_id not in seen_ids:
+                    seen_ids.add(msg_id)
+                    unique_messages.append(msg)
+                else:
+                    duplicate_count += 1
+                    self.logger.debug(f"跳过重复消息 ID: {msg_id} (平台: {platform})")
+            else:
+                # 无ID的消息：全部保留，但记录数量
+                unique_messages.append(msg)
+                no_id_count += 1
+                self.logger.debug(f"保留无ID消息 (平台: {platform}) - 无法判断重复性")
+        
+        # 记录去重统计
+        if duplicate_count > 0 or no_id_count > 0:
+            status_parts = []
+            if duplicate_count > 0:
+                status_parts.append(f"移除 {duplicate_count} 条重复消息")
+            if no_id_count > 0:
+                status_parts.append(f"保留 {no_id_count} 条无ID消息")
+            
+            self.logger.info(f"平台 {platform} 去重: {', '.join(status_parts)}，最终保留 {len(unique_messages)} 条消息")
+        else:
+            self.logger.debug(f"平台 {platform}: {len(unique_messages)} 条消息无重复")
+            
+        return unique_messages
+    
+    def _deduplicate_platform_data(self, all_platform_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        对各平台数据分别进行去重（每个平台单独去重）
+        
+        注意：不需要跨平台去重，因为不同平台的消息ID前缀不同，永远不会冲突
+        
+        Args:
+            all_platform_data: 所有平台数据字典 {platform: messages}
+            
+        Returns:
+            去重后的平台数据字典
+        """
+        deduplicated_data = {}
+        total_original = 0
+        total_deduplicated = 0
+        
+        for platform, messages in all_platform_data.items():
+            original_count = len(messages)
+            # 每个平台单独去重
+            deduplicated_messages = self._deduplicate_messages(messages, platform)
+            deduplicated_count = len(deduplicated_messages)
+            
+            deduplicated_data[platform] = deduplicated_messages
+            total_original += original_count
+            total_deduplicated += deduplicated_count
+        
+        # 记录整体去重统计
+        total_removed = total_original - total_deduplicated
+        if total_removed > 0:
+            removal_percentage = (total_removed / total_original) * 100
+            self.logger.info(f"📊 各平台去重完成: 原始消息 {total_original} 条 → 去重后 {total_deduplicated} 条")
+            self.logger.info(f"✅ 去重效果: 移除 {total_removed} 条重复消息 ({removal_percentage:.1f}%)")
+        else:
+            self.logger.info(f"✅ 各平台数据检查: {total_deduplicated} 条消息无重复")
+        
+        return deduplicated_data
+    
     async def process_unified_multi_platform_messages(
         self, 
         all_platform_data: Dict[str, List[Dict[str, Any]]], 
@@ -846,12 +940,18 @@ class BatchProcessor:
             return self._create_empty_batch_result("unified")
         
         start_time = time.time()
-        total_messages = sum(len(msgs) for msgs in all_platform_data.values())
         
-        self.logger.info(f"Starting unified multi-platform analysis: {total_messages} total messages")
+        # 🔄 对各平台数据分别去重
+        self.logger.info("🔄 开始对各平台数据分别去重...")
+        deduplicated_data = self._deduplicate_platform_data(all_platform_data)
         
-        # 创建平台标签化的批次数据
-        tagged_data_batches = self._create_platform_tagged_batches(all_platform_data, self.config.max_messages_per_batch)
+        # 使用去重后的数据计算总消息数
+        total_messages = sum(len(msgs) for msgs in deduplicated_data.values())
+        
+        self.logger.info(f"Starting unified multi-platform analysis: {total_messages} total messages (after deduplication)")
+        
+        # 创建平台标签化的批次数据 - 使用去重后的数据
+        tagged_data_batches = self._create_platform_tagged_batches(deduplicated_data, self.config.max_messages_per_batch)
         
         if len(tagged_data_batches) == 1:
             # 单批次：直接处理
@@ -1107,6 +1207,9 @@ class BatchProcessor:
         
         start_time = time.time()
         
+        # 🔄 对输入的消息进行去重处理
+        deduplicated_messages = self._deduplicate_messages(messages, platform)
+        
         # Use the template string from PromptTemplate
         template_string = prompt_template.template
         
@@ -1121,7 +1224,7 @@ class BatchProcessor:
             # Process as single batch since messages are already formatted with citations
             batch_detail = BatchExecutionDetail(
                 batch_number=1,
-                message_count=len(messages),
+                message_count=len(deduplicated_messages),  # 使用去重后的数量
                 tokens_used=0,
                 processing_time=0,
                 success=False,
@@ -1147,8 +1250,8 @@ class BatchProcessor:
                     
                     result = BatchResult(
                         platform=platform,
-                        total_messages=len(messages),
-                        processed_messages=len(messages),
+                        total_messages=len(deduplicated_messages),  # 使用去重后的数量
+                        processed_messages=len(deduplicated_messages),  # 使用去重后的数量
                         successful_batches=1,
                         failed_batches=0,
                         total_tokens_used=response.usage.get('total_tokens', 0),
@@ -1171,7 +1274,7 @@ class BatchProcessor:
                     
                     result = BatchResult(
                         platform=platform,
-                        total_messages=len(messages),
+                        total_messages=len(deduplicated_messages),  # 使用去重后的数量
                         processed_messages=0,
                         successful_batches=0,
                         failed_batches=1,
@@ -1197,7 +1300,7 @@ class BatchProcessor:
                 
                 result = BatchResult(
                     platform=platform,
-                    total_messages=len(messages),
+                    total_messages=len(deduplicated_messages),  # 使用去重后的数量
                     processed_messages=0,
                     successful_batches=0,
                     failed_batches=1,
@@ -1219,8 +1322,8 @@ class BatchProcessor:
             # Create LinkGenerator for platform-specific formatting
             link_generator = LinkGenerator()
             
-            # Create intelligent batches
-            batches = self._create_intelligent_batches(messages, template_string)
+            # Create intelligent batches - 使用去重后的消息
+            batches = self._create_intelligent_batches(deduplicated_messages, template_string)
             self.logger.info(f"Created {len(batches)} batches for {platform} processing")
             
             # If only one batch, process directly without integration
@@ -1307,7 +1410,7 @@ class BatchProcessor:
                     if response.success:
                         return BatchResult(
                             platform=platform,
-                            total_messages=len(messages),
+                            total_messages=len(deduplicated_messages),  # 使用去重后的数量
                             processed_messages=len(batch_messages),
                             successful_batches=1,
                             failed_batches=0,
@@ -1320,7 +1423,7 @@ class BatchProcessor:
                     else:
                         return BatchResult(
                             platform=platform,
-                            total_messages=len(messages),
+                            total_messages=len(deduplicated_messages),  # 使用去重后的数量
                             processed_messages=0,
                             successful_batches=0,
                             failed_batches=1,
@@ -1336,7 +1439,7 @@ class BatchProcessor:
                     self.logger.error(f"Error processing single batch: {e}")
                     return BatchResult(
                         platform=platform,
-                        total_messages=len(messages),
+                        total_messages=len(deduplicated_messages),  # 使用去重后的数量
                         processed_messages=0,
                         successful_batches=0,
                         failed_batches=1,
@@ -1374,8 +1477,8 @@ class BatchProcessor:
                     
                     return BatchResult(
                         platform=platform,
-                        total_messages=len(messages),
-                        processed_messages=len(messages),
+                        total_messages=len(deduplicated_messages),  # 使用去重后的数量
+                        processed_messages=len(deduplicated_messages),  # 使用去重后的数量
                         successful_batches=len(batches),
                         failed_batches=0,
                         total_tokens_used=getattr(integration_response, 'tokens_used', integration_response.token_count if hasattr(integration_response, 'token_count') else 0),
@@ -1404,7 +1507,7 @@ class BatchProcessor:
                     
                     return BatchResult(
                         platform=platform,
-                        total_messages=len(messages),
+                        total_messages=len(deduplicated_messages),  # 使用去重后的数量
                         processed_messages=0,
                         successful_batches=0,
                         failed_batches=len(batches),
