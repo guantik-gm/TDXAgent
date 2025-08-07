@@ -251,14 +251,14 @@ class TDXAgent:
     
     async def run_analysis(self, platforms: List[str] = None, hours_back: int = None) -> Dict[str, Any]:
         """
-        Run AI analysis on collected data.
+        Run unified multi-platform AI analysis on collected data.
         
         Args:
             platforms: Platforms to analyze (all if None)
             hours_back: Hours back to analyze (uses config default if None)
             
         Returns:
-            Dictionary of analysis results
+            Dictionary with unified analysis results
         """
         if not self.batch_processor:
             self.logger.error("No LLM provider available for analysis")
@@ -267,22 +267,18 @@ class TDXAgent:
         hours_back = hours_back or self.config_manager.app.default_hours_to_fetch
         platforms = platforms or list(self.scrapers.keys())
         
-        # Calculate time range for analysis (more precise than date-based)
+        # Calculate time range for analysis
         from datetime import datetime, timedelta, timezone
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=hours_back)
-        
-        # Also calculate date range for logging
-        start_date = start_time.date()
-        end_date = end_time.date()
         
         # 转换为本地时间显示
         local_start_time = start_time.astimezone()
         local_end_time = end_time.astimezone()
         self.logger.info(f"分析时间范围: {local_start_time.strftime('%Y-%m-%d %H:%M')} 到 {local_end_time.strftime('%Y-%m-%d %H:%M')} ({hours_back}小时)")
         
-        # 🎯 按平台独立分析 - 单独处理每个平台的数据
-        platform_results = {}
+        # 🎯 统一多平台分析 - 收集所有平台数据后统一分析
+        all_platform_data = {}
         total_messages = 0
         
         with Progress(
@@ -291,23 +287,16 @@ class TDXAgent:
             console=self.console
         ) as progress:
             
-            # Get pure investment analysis template (platform-agnostic)
-            prompt_template = await self.prompt_manager.get_template('pure_investment_analysis')
+            # Step 1: 收集所有平台数据
+            data_collection_task = progress.add_task("收集所有平台数据...", total=None)
             
-            if not prompt_template:
-                self.logger.error("Pure investment analysis template not found")
-                return {'error': 'Pure investment analysis template not available'}
-            
-            # 按平台独立处理
             for platform in platforms:
                 platform_enabled = self.config_manager.is_platform_enabled(platform)
                 self.logger.info(f"平台 {platform} 启用状态: {platform_enabled}")
                 
                 if not platform_enabled:
-                    self.logger.warning(f"平台 {platform} 被禁用，跳过分析")
+                    self.logger.warning(f"平台 {platform} 被禁用，跳过收集")
                     continue
-                
-                platform_task = progress.add_task(f"分析 {platform} 平台数据...", total=None)
                 
                 try:
                     # 使用精确时间范围收集当前平台数据
@@ -317,116 +306,70 @@ class TDXAgent:
                         end_time=end_time
                     )
                     
-                    if not messages:
+                    if messages:
+                        all_platform_data[platform] = messages
+                        total_messages += len(messages)
+                        self.logger.info(f"收集到 {len(messages)} 条 {platform} 消息")
+                    else:
                         self.logger.info(f"No messages found for {platform}")
-                        platform_results[platform] = {
-                            'batch_result': None,
-                            'total_messages_analyzed': 0,
-                            'error': f'No data available for {platform}'
-                        }
-                        continue
-                    
-                    total_messages += len(messages)
-                    self.logger.info(f"收集到 {len(messages)} 条 {platform} 消息")
-                    
-                    # 🤖 执行单平台分析 - 使用自动分批处理
-                    batch_result = await self.batch_processor.process_messages_with_template(
-                        messages=messages,
-                        prompt_template=prompt_template,
-                        platform=platform,
-                        formatted_messages=""  # 让BatchProcessor内部处理分批和格式化
-                    )
-                    
-                    platform_results[platform] = {
-                        'batch_result': batch_result,
-                        'total_messages_analyzed': len(messages),
-                        'platform': platform
-                    }
-                    
-                    self.logger.info(f"完成 {platform} 平台分析: {len(messages)} 条消息")
-                    
-                    # 平台间缓冲等待时间（除了最后一个平台）
-                    current_platform_index = list(platforms).index(platform)
-                    if current_platform_index < len(list(platforms)) - 1:  # 不是最后一个平台
-                        delay = self.config_manager.llm.multi_platform_delay
-                        self.logger.info(f"平台间等待 {delay} 秒缓冲时间...")
-                        await asyncio.sleep(delay)
-                    
+                        
                 except Exception as e:
-                    self.logger.error(f"Failed to analyze {platform} data: {e}")
-                    platform_results[platform] = {
-                        'batch_result': None,
-                        'total_messages_analyzed': 0,
-                        'error': str(e)
-                    }
-                
-                progress.advance(platform_task)
+                    self.logger.error(f"Failed to collect {platform} data: {e}")
             
-            if not platform_results:
+            progress.advance(data_collection_task)
+            
+            if not all_platform_data:
                 self.logger.warning("No data collected from any platform")
                 return {'error': 'No data available for analysis'}
             
-            results = {
-                'platform_analysis': platform_results,
-                'total_messages_analyzed': total_messages,
-                'platforms_included': list(platform_results.keys())
-            }
+            # Step 2: 获取纯投资分析模板 (完全平台无关)
+            prompt_template = await self.prompt_manager.get_template('pure_investment_analysis')
+            if not prompt_template:
+                self.logger.error("Pure investment analysis template not found")
+                return {'error': 'Pure investment analysis template not available'}
             
-            self.logger.info(
-                f"完成按平台独立分析: {total_messages} 条消息来自 {len(platform_results)} 个平台"
-            )
-        
-        return results
-    
-    async def _format_platform_data(self, messages: List[Dict[str, Any]], platform: str) -> str:
-        """
-        格式化单个平台数据为AI分析的输入格式 - 完全平台无关。
-        
-        Args:
-            messages: 平台消息数据
-            platform: 平台名称（保留参数用于兼容性，但不再使用）
+            # Step 3: 统一多平台分析
+            analysis_task = progress.add_task("执行统一多平台分析...", total=None)
             
-        Returns:
-            格式化后的统一数据字符串
-        """
-        if not messages:
-            return ""
-        
-        try:
-            # 使用新的统一格式化方法 - AI完全平台无关
-            return self.link_generator.format_messages_unified(messages)
+            try:
+                # 🤖 执行统一多平台分析 - 使用新的统一处理方法
+                unified_result = await self.batch_processor.process_unified_multi_platform_messages(
+                    all_platform_data=all_platform_data,
+                    prompt_template=prompt_template
+                )
                 
-        except Exception as e:
-            self.logger.error(f"Failed to format platform data: {e}")
-            # Fallback to basic unified formatting
-            formatted_lines = []
-            for i, msg in enumerate(messages, 1):
-                author = msg.get('author', {}).get('name', 'Unknown')
-                content = msg.get('content', {}).get('text', '')
-                timestamp = msg.get('metadata', {}).get('posted_at', '')[:16]
-                platform_name = msg.get('platform', '').title()
-                if content.strip():
-                    formatted_lines.append(f"{i}. [{timestamp}] {author}@{platform_name}: {content}")
-            return '\n'.join(formatted_lines)
+                self.logger.info(
+                    f"完成统一多平台分析: {total_messages} 条消息来自 {len(all_platform_data)} 个平台"
+                )
+                
+                # 构建统一结果结构
+                results = {
+                    'unified_analysis': unified_result,
+                    'total_messages_analyzed': total_messages,
+                    'platforms_included': list(all_platform_data.keys()),
+                    'platform_message_counts': {
+                        platform: len(messages) 
+                        for platform, messages in all_platform_data.items()
+                    }
+                }
+                
+                progress.advance(analysis_task)
+                return results
+                
+            except Exception as e:
+                self.logger.error(f"Failed to run unified analysis: {e}")
+                return {
+                    'error': f'Unified analysis failed: {str(e)}',
+                    'platforms_included': list(all_platform_data.keys()),
+                    'total_messages_analyzed': total_messages
+                }
+        
+        return {
+            'error': 'Analysis workflow interrupted',
+            'platforms_included': [],
+            'total_messages_analyzed': 0
+        }
     
-    async def _format_cross_platform_data(self, all_platform_data: Dict[str, List]) -> str:
-        """
-        格式化跨平台数据为AI分析的统一输入格式 - 完全平台无关。
-        
-        Args:
-            all_platform_data: 各平台的消息数据
-            
-        Returns:
-            格式化后的统一数据字符串
-        """
-        # 合并所有平台的消息
-        all_messages = []
-        for platform, messages in all_platform_data.items():
-            if messages:
-                all_messages.extend(messages)
-        
-        # 使用统一格式化方法 - AI完全平台无关
-        return self.link_generator.format_messages_unified(all_messages)
     
     def _get_platform_display_name(self, platform: str) -> str:
         """获取平台显示名称"""
@@ -440,10 +383,10 @@ class TDXAgent:
     
     async def generate_reports(self, analysis_results: Dict[str, Any], hours_back: int = None) -> List[str]:
         """
-        Generate unified comprehensive report from cross-platform analysis results.
+        Generate unified report from multi-platform analysis results.
         
         Args:
-            analysis_results: Results from run_analysis (now contains cross_platform_analysis)
+            analysis_results: Results from run_analysis (contains unified_analysis)
             hours_back: Hours back that were processed (for filename generation)
             
         Returns:
@@ -452,176 +395,85 @@ class TDXAgent:
         report_paths = []
         
         try:
-            # 检查是否有按平台分析结果
-            if 'platform_analysis' not in analysis_results:
-                self.logger.error("No platform analysis results found")
-                return []
-            
-            platform_results = analysis_results['platform_analysis']
-            
-            
-            # Generate individual platform reports and collect all platform info
-            self.logger.debug(f"开始生成 {len(platform_results)} 个平台的报告")
-            all_platform_info = {}  # Store both successful and failed platform info
-            
-            for platform, platform_result in platform_results.items():
-                if not platform_result.get('batch_result') or not platform_result['batch_result'].summaries:
-                    self.logger.warning(f"No analysis summaries available for {platform}")
-                    # Store failed platform info
-                    error_msg = platform_result.get('error', 'Analysis failed or no summaries available')
-                    all_platform_info[platform] = {
-                        'status': 'failed',
-                        'error': error_msg,
-                        'report_path': None
-                    }
-                    continue
-                
-                self.logger.debug(f"正在生成 {platform} 平台报告...")
-                
-                # Generate platform-specific report
-                platform_path = await self.report_generator.generate_platform_report(
-                    platform=platform,
-                    batch_result=platform_result['batch_result'],
-                    messages=platform_result.get('messages', []),
+            # 检查是否有分析错误
+            if 'error' in analysis_results:
+                self.logger.error(f"Analysis failed: {analysis_results['error']}")
+                # 生成错误报告
+                error_path = await self.report_generator.generate_error_report(
+                    error_message=analysis_results['error'],
+                    platforms_attempted=analysis_results.get('platforms_included', []),
+                    total_messages=analysis_results.get('total_messages_analyzed', 0),
                     start_time=self.execution_start_time,
                     hours_back=hours_back
                 )
-                
-                if platform_path:
-                    report_paths.append(platform_path)
-                    all_platform_info[platform] = {
-                        'status': 'success',
-                        'report_path': platform_path,
-                        'error': None
-                    }
-                    self.logger.debug(f"✅ {platform} 平台报告已生成: {Path(platform_path).name}")
-                    # Note: ReportGenerator already logs the generation success
-                else:
-                    # Report generation failed
-                    all_platform_info[platform] = {
-                        'status': 'failed',
-                        'error': 'Report generation failed',
-                        'report_path': None
-                    }
+                if error_path:
+                    report_paths.append(error_path)
+                return report_paths
             
-            # Generate consolidated report if any platforms were processed (successful or failed)
-            if all_platform_info:
-                total_platforms = len(all_platform_info)
-                successful_platforms = len(report_paths)
-                failed_platforms = total_platforms - successful_platforms
+            # 检查是否有统一分析结果
+            if 'unified_analysis' not in analysis_results:
+                self.logger.error("No unified analysis results found")
+                # 生成错误报告
+                error_path = await self.report_generator.generate_error_report(
+                    error_message="分析流程未能产生有效结果，可能是系统内部错误",
+                    platforms_attempted=analysis_results.get('platforms_included', []),
+                    total_messages=analysis_results.get('total_messages_analyzed', 0),
+                    start_time=self.execution_start_time,
+                    hours_back=hours_back
+                )
+                if error_path:
+                    report_paths.append(error_path)
+                return report_paths
+            
+            unified_result = analysis_results['unified_analysis']
+            platforms_included = analysis_results.get('platforms_included', [])
+            total_messages = analysis_results.get('total_messages_analyzed', 0)
+            
+            # 检查统一分析结果是否有效
+            if not unified_result or not unified_result.summaries:
+                self.logger.warning("No analysis summaries available in unified result")
+                # 生成错误报告，但包含更多调试信息
+                error_details = []
+                if not unified_result:
+                    error_details.append("分析处理器未返回结果对象")
+                elif not unified_result.summaries:
+                    error_details.append("分析处理完成，但未产生分析摘要")
                 
-                if failed_platforms > 0:
-                    self.logger.info(f"生成汇总报告，整合 {successful_platforms} 个成功平台报告和 {failed_platforms} 个失败平台信息...")
-                else:
-                    self.logger.info(f"生成汇总报告，整合 {successful_platforms} 个平台报告...")
-                
-                # 生成汇总报告：包含成功和失败平台的信息
-                consolidated_path = await self._generate_consolidated_report(all_platform_info, hours_back)
-                
-                if consolidated_path:
-                    # 根据配置决定是否删除单独的平台报告文件
-                    multi_platform_config = self.config_manager.output.get('multi_platform_reports', {})
-                    keep_individual_reports = multi_platform_config.get('keep_individual_reports', False)
-                    
-                    if not keep_individual_reports:
-                        # 删除单独的平台报告文件
-                        for platform_path in report_paths:
-                            try:
-                                Path(platform_path).unlink()
-                                self.logger.debug(f"已删除单独平台报告: {Path(platform_path).name}")
-                            except Exception as e:
-                                self.logger.warning(f"删除平台报告失败 {platform_path}: {e}")
-                        
-                        # 只保留汇总报告路径
-                        report_paths = [consolidated_path]
-                        self.logger.info(f"已生成汇总报告并清理单独报告: {Path(consolidated_path).name}")
-                    else:
-                        # 保留分平台报告，添加汇总报告到路径列表
-                        report_paths.append(consolidated_path)
-                        self.logger.info(f"已生成汇总报告并保留分平台报告: {Path(consolidated_path).name}")
+                error_path = await self.report_generator.generate_error_report(
+                    error_message=f"分析失败: {'; '.join(error_details)}",
+                    platforms_attempted=platforms_included,
+                    total_messages=total_messages,
+                    start_time=self.execution_start_time,
+                    hours_back=hours_back,
+                    analysis_result=unified_result  # 传递分析结果用于调试
+                )
+                if error_path:
+                    report_paths.append(error_path)
+                return report_paths
+            
+            self.logger.info(f"开始生成统一多平台分析报告...")
+            self.logger.info(f"分析数据：{total_messages} 条消息来自 {len(platforms_included)} 个平台: {', '.join(platforms_included)}")
+            
+            # 生成统一多平台报告
+            unified_path = await self.report_generator.generate_unified_report(
+                batch_result=unified_result,
+                platforms_included=platforms_included,
+                total_messages=total_messages,
+                start_time=self.execution_start_time,
+                hours_back=hours_back
+            )
+            
+            if unified_path:
+                report_paths.append(unified_path)
+                self.logger.info(f"✅ 统一多平台分析报告已生成: {Path(unified_path).name}")
             else:
-                self.logger.warning(f"无平台报告可生成汇总: {len(report_paths)} 个平台报告")
+                self.logger.error("统一报告生成失败")
             
         except Exception as e:
             self.logger.error(f"Failed to generate reports: {e}")
         
         return report_paths
     
-    async def _generate_consolidated_report(self, all_platform_info: Dict[str, Dict], hours_back: int = None) -> str:
-        """
-        生成汇总报告：包含成功平台报告和失败平台错误信息
-        
-        Args:
-            all_platform_info: 所有平台信息字典 {platform: {'status': 'success'|'failed', 'report_path': str|None, 'error': str|None}}
-            hours_back: 小时数（用于文件名）
-            
-        Returns:
-            汇总报告文件路径
-        """
-        try:
-            # 处理所有平台信息，包含成功和失败的平台
-            all_contents = []
-            
-            # 按平台名称排序，确保输出顺序一致
-            for platform in sorted(all_platform_info.keys()):
-                platform_info = all_platform_info[platform]
-                
-                if platform_info['status'] == 'success' and platform_info['report_path']:
-                    # 成功的平台：读取报告文件内容
-                    try:
-                        with open(platform_info['report_path'], 'r', encoding='utf-8') as f:
-                            content = f.read().strip()
-                            all_contents.append(content)
-                    except Exception as e:
-                        self.logger.warning(f"读取 {platform} 报告失败: {e}")
-                        # 如果读取失败，生成错误信息
-                        error_content = self._generate_failed_platform_section(platform, f"报告文件读取失败: {e}")
-                        all_contents.append(error_content)
-                
-                elif platform_info['status'] == 'failed':
-                    # 失败的平台：生成错误信息段落
-                    error_content = self._generate_failed_platform_section(platform, platform_info['error'])
-                    all_contents.append(error_content)
-            
-            if not all_contents:
-                self.logger.error("没有可用的平台报告内容")
-                return None
-            
-            # 用 --- 分割符整合所有报告
-            consolidated_content = "\n\n---\n\n".join(all_contents)
-            
-            # 生成汇总报告文件名
-            timestamp = datetime.now().strftime("%Y年%m月%d日_%H时%M分")
-            
-            if hours_back:
-                if hours_back == 1:
-                    period_desc = "1小时"
-                elif hours_back == 12:
-                    period_desc = "12小时"
-                elif hours_back == 24:
-                    period_desc = "1天"
-                elif hours_back < 24:
-                    period_desc = f"{hours_back}小时"
-                elif hours_back % 24 == 0:
-                    days = hours_back // 24
-                    period_desc = f"{days}天"
-                else:
-                    period_desc = f"{hours_back}小时"
-            else:
-                period_desc = "多小时"
-            
-            filename = f"TDXAgent_多平台汇总报告_{timestamp}_{period_desc}.md"
-            consolidated_path = self.report_generator.output_directory / filename
-            
-            # 写入汇总报告
-            with open(consolidated_path, 'w', encoding='utf-8') as f:
-                f.write(consolidated_content)
-            
-            return str(consolidated_path)
-            
-        except Exception as e:
-            self.logger.error(f"生成汇总报告失败: {e}")
-            return None
     
     async def run_full_pipeline(self, hours_back: int = None, platforms: List[str] = None) -> Dict[str, Any]:
         """
@@ -666,36 +518,54 @@ class TDXAgent:
         table = Table(title="TDXAgent 执行摘要")
         table.add_column("平台", style="cyan")
         table.add_column("收集消息", style="green")
-        table.add_column("分析消息", style="yellow")
-        table.add_column("状态", style="magenta")
+        table.add_column("分析状态", style="yellow")
         
-        for platform in set(list(collection_results.keys()) + list(analysis_results.keys())):
+        # 处理新的统一分析结构
+        platforms_included = analysis_results.get('platforms_included', [])
+        platform_message_counts = analysis_results.get('platform_message_counts', {})
+        unified_analysis = analysis_results.get('unified_analysis')
+        
+        # 显示各平台信息
+        all_platforms = set(list(collection_results.keys()) + platforms_included)
+        
+        for platform in sorted(all_platforms):
             # Collection info
             collection_info = collection_results.get(platform, {})
             collected = collection_info.get('stored_messages', 0)
             
-            # Analysis info
-            analysis_info = analysis_results.get(platform, {})
-            if 'batch_result' in analysis_info:
-                analyzed = analysis_info['batch_result'].processed_messages
-                status = f"✅ {analysis_info['batch_result'].success_rate:.1f}%"
+            # Analysis info - 新的统一结构
+            analyzed_count = platform_message_counts.get(platform, 0)
+            
+            # 分析状态
+            if platform in platforms_included and unified_analysis:
+                if analyzed_count > 0:
+                    status = f"✅ 已统一分析"
+                else:
+                    status = "⚠️ 无数据"
+            elif platform in collection_results:
+                status = "⏭️ 未分析"
             else:
-                analyzed = 0
                 status = "❌ 失败"
             
             table.add_row(
                 platform.title(),
                 str(collected),
-                str(analyzed),
                 status
             )
         
         self.console.print(table)
         
+        # 统一分析摘要
+        if unified_analysis:
+            total_messages = analysis_results.get('total_messages_analyzed', 0)
+            success_rate = unified_analysis.success_rate if hasattr(unified_analysis, 'success_rate') else 100
+            self.console.print(f"\n🤖 统一多平台分析: {total_messages} 条消息，成功率 {success_rate:.1f}%")
+            self.console.print(f"   涉及平台: {', '.join(platforms_included)}")
+        
         # Report info
         if report_paths:
             if len(report_paths) == 1:
-                self.console.print(f"\n📄 生成综合报告:")
+                self.console.print(f"\n📄 生成统一报告:")
             else:
                 self.console.print(f"\n📄 生成了 {len(report_paths)} 个报告:")
             
@@ -704,83 +574,6 @@ class TDXAgent:
         
         self.console.print(Panel.fit("✨ TDXAgent 流程执行完成!", style="bold green"))
     
-    def _generate_failed_platform_section(self, platform: str, error_message: str) -> str:
-        """
-        为失败的平台生成错误信息段落
-        
-        Args:
-            platform: 平台名称
-            error_message: 错误信息
-            
-        Returns:
-            格式化的错误信息段落
-        """
-        # 生成时间戳
-        timestamp = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
-        
-        # 平台名称映射
-        platform_names = {
-            'twitter': 'Twitter/X',
-            'telegram': 'Telegram',
-            'discord': 'Discord',
-            'gmail': 'Gmail'
-        }
-        platform_display_name = platform_names.get(platform.lower(), platform.capitalize())
-        
-        # 检查是否是认证错误
-        is_auth_error = any(keyword in error_message.lower() 
-                          for keyword in ['authenticate', 'auth', 'user code', 'login', 'credential'])
-        
-        if is_auth_error:
-            error_section = f"""# {platform_display_name} 平台分析报告
-
-## ⚠️ 分析失败 - 认证错误
-
-**生成时间**: {timestamp}
-
-**错误类型**: 平台认证失败
-
-**详细信息**: {error_message}
-
-**解决方案**:
-- 请检查 {platform_display_name} 平台的认证配置
-- 可能需要重新进行平台认证
-- 对于Gemini CLI，请运行 `gemini auth` 重新认证
-- 对于其他平台，请查看相关认证文档
-
-**数据收集状态**: 无法访问平台数据
-
-**分析结果**: 由于认证失败，无法进行投资分析
-
----
-
-💡 **提示**: 认证问题解决后，请重新运行分析命令获取完整报告。"""
-        else:
-            error_section = f"""# {platform_display_name} 平台分析报告
-
-## ❌ 分析失败
-
-**生成时间**: {timestamp}
-
-**错误类型**: 分析处理失败
-
-**详细信息**: {error_message}
-
-**可能原因**:
-- 平台数据处理异常
-- AI分析服务临时不可用
-- 数据格式或质量问题
-- 系统资源不足
-
-**数据收集状态**: 可能有数据但分析失败
-
-**分析结果**: 无法生成投资分析
-
----
-
-💡 **提示**: 请检查系统日志获取详细错误信息，或稍后重新尝试分析。"""
-        
-        return error_section
     
     def _log_task_summary(self, task_type: str, **kwargs) -> None:
         """
@@ -922,43 +715,45 @@ def analyze(ctx, hours, platforms):
         if 'error' in analysis_results:
             error_count = 1
             status = "FAILED"
-        elif 'platform_analysis' in analysis_results:
-            # Process platform analysis results
-            for platform, result in analysis_results['platform_analysis'].items():
-                if isinstance(result, dict):
-                    if 'error' in result:
-                        error_count += 1
-                        failed_platforms.append(platform)
-                        # Check for authentication errors
-                        error_msg = result.get('error', '').lower()
-                        if 'authenticate' in error_msg or 'auth' in error_msg or 'user code' in error_msg:
-                            auth_failed_platforms.append(platform)
+        elif 'unified_analysis' in analysis_results:
+            # 🎯 统一分析架构 - 提取分析结果数据
+            unified_result = analysis_results.get('unified_analysis')
+            total_messages = analysis_results.get('total_messages_analyzed', 0)
+            platforms_included = analysis_results.get('platforms_included', [])
+            platform_counts = analysis_results.get('platform_message_counts', {})
+            
+            # 构建平台分解信息
+            for platform, count in platform_counts.items():
+                platform_breakdown.append(f"{platform}:{count}")
+                successful_platforms.append(platform)
+            
+            # 检查统一分析结果是否成功
+            if unified_result:
+                # BatchResult成功判断：有成功的批次且有分析摘要
+                has_successful_batches = unified_result.successful_batches > 0
+                has_summaries = unified_result.summaries and len(unified_result.summaries) > 0
+                has_no_critical_errors = unified_result.failed_batches == 0 or unified_result.successful_batches > 0
+                
+                if has_successful_batches and has_summaries and has_no_critical_errors:
+                    status = "SUCCESS"
+                    # 计算批次数量
+                    if hasattr(unified_result, 'batch_details') and unified_result.batch_details:
+                        total_batches = len(unified_result.batch_details)
+                    elif unified_result.summaries:
+                        total_batches = len(unified_result.summaries)
                     else:
-                        # Check if batch_result is None or failed
-                        batch_result = result.get('batch_result')
-                        if batch_result is None or (hasattr(batch_result, 'success') and not batch_result.success):
-                            error_count += 1
-                            failed_platforms.append(platform)
-                            # Check for authentication errors in batch result
-                            if batch_result and hasattr(batch_result, 'error_message'):
-                                error_msg = batch_result.error_message.lower()
-                                if 'authenticate' in error_msg or 'auth' in error_msg or 'user code' in error_msg:
-                                    auth_failed_platforms.append(platform)
-                        else:
-                            messages_count = result.get('total_messages_analyzed', 0)
-                            total_messages += messages_count
-                            platform_breakdown.append(f"{platform}:{messages_count}")
-                            successful_platforms.append(platform)
-                            
-                            # Count batches if available
-                            if batch_result and hasattr(batch_result, 'batch_details'):
-                                total_batches += len(batch_result.batch_details)
-            
-            # Update from global total if available
-            if 'total_messages_analyzed' in analysis_results:
-                total_messages = analysis_results['total_messages_analyzed']
-            
-            status = "SUCCESS" if error_count == 0 else "PARTIAL" if successful_platforms else "FAILED"
+                        total_batches = unified_result.successful_batches
+                else:
+                    error_count = 1
+                    status = "FAILED"
+                    # 不应该将成功的平台标记为失败
+                    # if platforms_included:
+                    #     failed_platforms.extend(platforms_included)
+            else:
+                error_count = 1
+                status = "FAILED"
+                if platforms_included:
+                    failed_platforms.extend(platforms_included)
         else:
             status = "FAILED"
         

@@ -191,10 +191,8 @@ class LinkGenerator:
         Returns:
             Formatted string with messages grouped by channel with platform header
         """
-        # 添加平台标识头部 - 使用markdown注释块引用格式
-        platform_header = "=== Telegram 数据 (使用markdown注释块引用格式) ==="
-        header_example = "<!-- 引用示例: 来自 群组名 @用户名 时间 -->"
-        formatted_lines = [platform_header, header_example, ""]
+        # 不添加引用格式说明 - 统一分析架构中由模板处理
+        formatted_lines = []
         
         # 按群组分组消息
         groups = {}
@@ -269,16 +267,9 @@ class LinkGenerator:
         if not platform and messages:
             platform = messages[0].get('platform', '').lower()
         
-        # 添加平台标识头部
-        platform_headers = {
-            'twitter': "=== Twitter 数据 (请使用内联链接引用格式) ===\n引用示例: (来自[作者名的推文](https://x.com/user/status/123))",
-            'discord': "=== Discord 数据 (请使用服务器+频道+用户引用格式) ===\n引用示例: (来自 服务器名 #频道名 @用户名 时间)",
-            'gmail': "=== Gmail 数据 (请使用发件人+主题引用格式) ===\n引用示例: (来自 [发件人的邮件：主题](mailto:xxx))"
-        }
+        # 不添加引用格式说明 - 统一分析架构中由模板处理
         
         formatted_lines = []
-        if platform in platform_headers:
-            formatted_lines.extend([platform_headers[platform], ""])
         
         for i, message in enumerate(messages, 1):
             # 基本消息信息

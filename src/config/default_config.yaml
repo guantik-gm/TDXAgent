@@ -195,14 +195,8 @@ llm:
   # 启用提示词文件保存（调试和优化用）
   enable_prompt_files: true
   
-  # 缓冲时间配置（秒）- 提升AI响应成功率
-  buffer_delays:
-    # 多平台处理前的缓冲时间
-    multi_platform_delay: 4
-    # 多批次处理前的缓冲时间  
-    multi_batch_delay: 3
-    # 批次间延迟时间
-    delay_between_batches: 2
+  # 批次间延迟时间（秒）- 统一多平台分析架构
+  delay_between_batches: 2
   
   # OpenAI 配置
   openai:
@@ -246,19 +240,12 @@ output:
   # 报告存储路径（可配置为其他笔记软件路径）
   reports_directory: "TDXAgent_Data/reports"
   
-  # 报告文件名模板
-  filename_template: "Summary_{platform}_{timestamp}.md"
+  # 报告文件名模板（统一多平台架构）
+  filename_template: "TDXAgent_统一多平台分析报告_{timestamp}.md"
   
   # 是否包含原文链接
   include_links: true
   
   # 是否包含媒体文件信息
   include_media: true
-  
-  # 多平台报告管理配置
-  multi_platform_reports:
-    # 生成汇总报告后是否保留分平台报告 (true: 保留, false: 删除)
-    keep_individual_reports: false
-    # 只有多个平台时才生成汇总报告 (true: 是, false: 始终生成)
-    generate_only_when_multiple: true
   

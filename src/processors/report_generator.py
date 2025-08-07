@@ -187,6 +187,101 @@ class ReportGenerator:
             self.logger.error(f"Failed to generate {platform} report: {e}")
             raise
     
+    async def generate_unified_report(self, 
+                                    batch_result: BatchResult,
+                                    platforms_included: List[str],
+                                    total_messages: int,
+                                    start_time: Optional[datetime] = None,
+                                    hours_back: Optional[int] = None) -> str:
+        """
+        Generate a unified multi-platform report from unified analysis results.
+        
+        Args:
+            batch_result: Unified analysis batch processing result
+            platforms_included: List of platforms included in analysis
+            total_messages: Total number of messages analyzed
+            start_time: Program start time (overrides instance value if provided)
+            hours_back: Hours of data collected (overrides instance value if provided)
+            
+        Returns:
+            Path to generated unified report file
+        """
+        try:
+            # Update timing parameters if provided
+            if start_time:
+                self.start_time = start_time
+            if hours_back is not None:
+                self.hours_back = hours_back
+                
+            await ensure_directory_async(self.output_directory)
+            
+            # Generate unified report content
+            report_content = self._generate_unified_content(batch_result, platforms_included, total_messages)
+            
+            # Create filename with unified format
+            filename = self._generate_filename("统一多平台分析报告")
+            report_path = self.output_directory / filename
+            
+            # Write report
+            await asyncio.to_thread(self._write_file, report_path, report_content)
+            
+            self.logger.info(f"Generated unified multi-platform report: {report_path}")
+            return str(report_path)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate unified report: {e}")
+            raise
+    
+    async def generate_error_report(self, 
+                                  error_message: str,
+                                  platforms_attempted: List[str],
+                                  total_messages: int,
+                                  start_time: Optional[datetime] = None,
+                                  hours_back: Optional[int] = None,
+                                  analysis_result: Optional = None) -> str:
+        """
+        Generate an error report when analysis fails.
+        
+        Args:
+            error_message: The error that occurred
+            platforms_attempted: List of platforms that were attempted
+            total_messages: Total number of messages that were collected
+            start_time: Program start time (overrides instance value if provided)
+            hours_back: Hours of data collected (overrides instance value if provided)
+            analysis_result: Any partial analysis result for debugging (optional)
+            
+        Returns:
+            Path to generated error report file
+        """
+        try:
+            # Update timing parameters if provided
+            if start_time:
+                self.start_time = start_time
+            if hours_back is not None:
+                self.hours_back = hours_back
+                
+            await ensure_directory_async(self.output_directory)
+            
+            # Generate error report content
+            report_content = self._generate_error_content(
+                error_message, platforms_attempted, total_messages, analysis_result
+            )
+            
+            # Create filename with error format
+            filename = self._generate_filename("分析错误报告")
+            report_path = self.output_directory / filename
+            
+            # Write report
+            await asyncio.to_thread(self._write_file, report_path, report_content)
+            
+            self.logger.info(f"Generated error report: {report_path}")
+            return str(report_path)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate error report: {e}")
+            # Don't raise here - we don't want to fail the error report generation
+            return None
+    
     async def _generate_summary_content(self, 
                                       platform_results: Dict[str, BatchResult],
                                       report_title: str) -> str:
@@ -414,6 +509,57 @@ class ReportGenerator:
         
         return content
     
+    def _generate_unified_content(self, 
+                                 batch_result: BatchResult,
+                                 platforms_included: List[str],
+                                 total_messages: int) -> str:
+        """Generate unified multi-platform report content."""
+        
+        report_time = format_timestamp(format_type="human")
+        
+        # Get platform display names
+        platform_names = [self._get_platform_display_name(p) for p in platforms_included]
+        platforms_display = "、".join(platform_names)
+        
+        content = f"""# TDXAgent 统一多平台分析报告
+
+**生成时间**: {report_time}  
+**数据范围**: 最近 {self.hours_back or 'N/A'} 小时  
+**分析模式**: 统一多平台分析
+
+## 📊 处理统计
+
+- **涉及平台**: {platforms_display}
+- **总消息数**: {total_messages:,}
+- **成功处理**: {batch_result.processed_messages:,} ({batch_result.success_rate:.1f}%)
+- **批次处理**: {batch_result.successful_batches} 成功 / {batch_result.failed_batches} 失败
+- **Token 使用**: {batch_result.total_tokens_used:,} (平均 {batch_result.average_tokens_per_batch:.0f}/批次)
+- **处理时间**: {batch_result.processing_time:.1f} 秒
+- **估算成本**: ${batch_result.total_cost:.4f}
+
+## 🤖 统一AI分析结果
+
+"""
+        
+        # Add unified AI analysis results
+        if batch_result.summaries:
+            content += f"""### 统一多平台投资分析
+
+"""
+            # 显示统一分析摘要
+            for summary in batch_result.summaries:
+                content += f"{summary}\n\n"
+        else:
+            content += "暂无 AI 分析结果。\n\n"
+        
+        # Add simple footer
+        content += f"""---
+
+*报告由 TDXAgent 自动生成 - {report_time}*
+"""
+        
+        return content
+    
     def _get_platform_display_name(self, platform: str) -> str:
         """Get display name for platform."""
         names = {
@@ -423,6 +569,50 @@ class ReportGenerator:
             'gmail': '📧 Gmail'
         }
         return names.get(platform.lower(), platform.title())
+    
+    def _generate_error_content(self, 
+                               error_message: str,
+                               platforms_attempted: List[str],
+                               total_messages: int,
+                               analysis_result = None) -> str:
+        """Generate error report content."""
+        
+        report_time = format_timestamp(format_type="human")
+        
+        # Get platform display names
+        if platforms_attempted:
+            platform_names = [self._get_platform_display_name(p) for p in platforms_attempted]
+            platforms_display = "、".join(platform_names)
+        else:
+            platforms_display = "无"
+        
+        content = f"""# TDXAgent 分析错误报告
+
+**生成时间**: {report_time}
+
+## 执行信息
+- **分析平台**: {platforms_display}
+- **收集消息**: {total_messages:,} 条
+- **数据状态**: ✅ 已收集完成
+
+## 错误日志
+```
+{error_message}
+```
+
+## 处理结果
+- **数据收集**: ✅ 成功 ({total_messages:,} 条消息已保存)
+- **AI分析**: ❌ 失败
+- **报告生成**: ❌ 未完成
+
+## 重新分析
+解决错误后运行: `python src/main.py analyze --hours {self.hours_back or 12}`
+
+---
+*{report_time} - TDXAgent*
+"""
+        
+        return content
     
     def _get_summary_template(self) -> str:
         """Get summary report template."""

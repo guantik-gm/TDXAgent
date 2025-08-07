@@ -16,7 +16,6 @@ import logging
 
 from utils.logger import TDXLogger, log_async_function_call
 from llm.base_provider import BaseLLMProvider, LLMResponse
-from processors.integration_manager import IntegrationManager, AnalysisContext
 from processors.prompt_manager import PromptTemplate
 
 
@@ -179,8 +178,7 @@ class BatchConfig:
     max_concurrent_batches: int = 2  # 降低并发以避免RPM限制
     retry_failed_batches: bool = True
     max_retries: int = 2
-    delay_between_batches: float = 4.5
-    multi_batch_delay: float = 3.0  # 多批次处理前的缓冲时间
+    delay_between_batches: float = 2.0  # 统一多平台分析架构的批次间延迟
     token_buffer: int = 8000  # 为响应保留更多tokens
     
     # 质量重试配置
@@ -236,7 +234,6 @@ class BatchProcessor:
                 retry_failed_batches=True,
                 max_retries=llm_config.max_retries,
                 delay_between_batches=llm_config.delay_between_batches,
-                multi_batch_delay=llm_config.multi_batch_delay,  # 多批次处理前的缓冲时间
                 token_buffer=0  # 不需要Token缓冲
             )
         
@@ -247,7 +244,6 @@ class BatchProcessor:
             raise ValueError("Invalid batch configuration")
         
         # Initialize integration manager
-        self.integration_manager = IntegrationManager(llm_provider=llm_provider)
         
         # Processing state
         self._processing_stats = {
@@ -259,7 +255,6 @@ class BatchProcessor:
         }
         
         # Integration manager for progressive analysis
-        self.integration_manager = IntegrationManager()
         
         
         self.logger.info(f"Initialized batch processor with progressive integration support")
@@ -302,9 +297,9 @@ class BatchProcessor:
         batches = self._create_intelligent_batches(messages, prompt_template)
         self.logger.info(f"Created {len(batches)} batches for processing")
         
-        # Process batches with progressive integration
-        final_result = await self._process_batches_with_integration(
-            batches, prompt_template, platform, progress_callback
+        # Process batches using simplified approach (without integration manager)
+        final_result = await self._process_batches_simple(
+            batches, prompt_template.template, platform, progress_callback
         )
         
         # Compile final results
@@ -381,21 +376,22 @@ class BatchProcessor:
         
         return f"[{timestamp}] {author} ({platform}): {content}"
     
-    async def _process_batches_with_integration(self, batches: List[List[Dict[str, Any]]], 
-                                              prompt_template: str,
-                                              platform: str = "",
-                                              progress_callback: Optional[Callable[[int, int], None]] = None) -> LLMResponse:
+
+    async def _process_batches_simple(self, batches: List[List[Dict[str, Any]]], 
+                                     prompt_template: str,
+                                     platform: str = "",
+                                     progress_callback: Optional[Callable[[int, int], None]] = None) -> LLMResponse:
         """
-        Process batches with progressive integration.
+        简化的批次处理方法 - 不使用IntegrationManager
         
         Args:
-            batches: List of message batches
-            prompt_template: Base prompt template
-            platform: Platform name for template selection
-            progress_callback: Progress callback function
+            batches: 消息批次列表
+            prompt_template: 提示词模板字符串
+            platform: 平台名称
+            progress_callback: 进度回调
             
         Returns:
-            Single integrated LLM response
+            最后一个批次的LLM响应
         """
         if not batches:
             return LLMResponse(
@@ -408,123 +404,52 @@ class BatchProcessor:
                 error_message="No batches to process"
             )
         
-        self.logger.info(f"Starting progressive integration of {len(batches)} batches")
+        self.logger.info(f"Starting simple batch processing of {len(batches)} batches")
         
-        # 多批次处理前的缓冲时间 - 提升AI响应成功率
-        if len(batches) > 1:
-            buffer_delay = self.config.multi_batch_delay
-            self.logger.info(f"检测到多批次处理 ({len(batches)}个批次)，等待 {buffer_delay} 秒缓冲时间...")
-            await asyncio.sleep(buffer_delay)
-        
-        current_analysis = None
-        current_context = None
+        current_analysis = ""
         total_tokens_used = 0
         accumulated_usage = {}
         
-        # Process each batch progressively
+        # Process each batch
         for batch_index, batch in enumerate(batches):
             try:
                 # Update progress
                 if progress_callback:
                     progress_callback(batch_index + 1, len(batches))
                 
-                # Determine if this is an integration batch
-                is_integration = self.integration_manager.should_use_integration_mode(
-                    batch_index + 1, len(batches)
+                # Import here to avoid circular dependency
+                from utils.link_generator import LinkGenerator
+                
+                # Format messages using unified method
+                link_generator = LinkGenerator()
+                formatted_messages = link_generator.format_messages_unified(batch)
+                
+                # Create prompt with integration context if not first batch
+                prompt = prompt_template.format(
+                    data=formatted_messages,
+                    integration_context=current_analysis if batch_index > 0 else ""
                 )
                 
-                if is_integration and current_analysis:
-                    # Use integration template and context
-                    result = await self._process_integration_batch(
-                        batch, prompt_template, current_analysis, platform
-                    )
-                else:
-                    # Use regular template for first batch
-                    result = await self._process_batch_with_quality_retry(batch, prompt_template, platform, batch_index)
+                # Process batch
+                response = await self.llm_provider.generate_response(prompt, platform=platform)
                 
-                if not result.success:
-                    self.logger.error(f"Batch {batch_index + 1} failed: {result.error_message}")
-                    return result  # Return failed result immediately
+                if not response.success:
+                    self.logger.error(f"Batch {batch_index + 1} failed: {response.error_message}")
+                    return response
                 
-                # 创建BatchExecutionDetail进行质量检测
-                batch_detail = BatchExecutionDetail(
-                    batch_number=batch_index + 1,
-                    message_count=len(batch),
-                    tokens_used=result.usage.get('total_tokens', 0),
-                    processing_time=0,  # 时间在_process_single_batch中已计算
-                    success=True,
-                    response_content=result.content,
-                    command_type="process_batches_with_integration",
-                    llm_command=getattr(result, 'call_command', 'command not available')
-                )
-                
-                # 检查响应内容质量
-                if not batch_detail.has_meaningful_content:
-                    self.logger.warning(f"平台 {platform} 批次 {batch_index + 1} 返回内容质量不佳或无有效结果")
-                    self.logger.warning(f"LLM命令: {batch_detail.llm_command}")
-                    
-                    # 记录完整响应内容用于调试
-                    if len(result.content) > 1000:
-                        self.logger.warning(f"完整响应内容 (前1000字符): {result.content[:1000]}...")
-                        self.logger.warning(f"完整响应内容 (后500字符): ...{result.content[-500:]}")
-                    else:
-                        self.logger.warning(f"完整响应内容: {result.content}")
-                    
-                    # 如果响应对象有错误信息或额外信息，也记录下来
-                    if hasattr(result, 'error_message') and result.error_message:
-                        self.logger.warning(f"响应错误信息: {result.error_message}")
-                    
-                    # 记录响应元数据
-                    self.logger.warning(f"响应成功状态: {result.success}")
-                    self.logger.warning(f"响应Token使用: {result.usage.get('total_tokens', 'unknown')}")
-                    self.logger.warning(f"响应提供商: {result.provider}")
-                    self.logger.warning(f"响应模型: {result.model}")
-                    
-                    # 对于无效响应，我们有几个选择：
-                    # 1. 跳过这个批次，不更新current_analysis
-                    # 2. 返回错误
-                    # 3. 使用空的分析结果
-                    
-                    # 对于第一个批次，如果无效则返回错误
-                    if batch_index == 0:
-                        self.logger.error(f"第一个批次返回无效内容，无法继续处理")
-                        return LLMResponse(
-                            content="",
-                            usage=accumulated_usage,
-                            model=self.llm_provider.default_model,
-                            provider=self.llm_provider.provider_name,
-                            timestamp=datetime.now(),
-                            success=False,
-                            error_message=f"第一个批次返回无效内容: {content_preview}"
-                        )
-                    
-                    # 对于后续批次，跳过并保持current_analysis不变
-                    self.logger.info(f"跳过批次 {batch_index + 1}，保持前批次分析结果")
-                    continue
-                
-                # Update current analysis and context
-                current_analysis = result.content
-                if batch_index < len(batches) - 1:  # Not the last batch
-                    # Prepare context for next batch
-                    context_token_limit = self.integration_manager.calculate_context_token_limit(
-                        self.config.max_tokens_per_batch, self.config.token_buffer
-                    )
-                    current_context = self.integration_manager.compress_analysis_context(
-                        current_analysis, context_token_limit
-                    )
-                
-                # Accumulate usage statistics
-                total_tokens_used += result.token_count
-                if result.usage:
-                    for key, value in result.usage.items():
+                # Update current analysis
+                current_analysis = response.content
+                total_tokens_used += response.token_count
+                if response.usage:
+                    for key, value in response.usage.items():
                         accumulated_usage[key] = accumulated_usage.get(key, 0) + value
                 
                 # Add delay between batches
                 if batch_index < len(batches) - 1:
-                    await asyncio.sleep(self.config.delay_between_batches)
+                    delay = getattr(self.llm_config, 'delay_between_batches', 2)
+                    await asyncio.sleep(delay)
                 
-                self.logger.info(f"Completed batch {batch_index + 1}/{len(batches)} "
-                               f"({'integration' if is_integration else 'initial'})")
+                self.logger.info(f"Completed batch {batch_index + 1}/{len(batches)}")
                 
             except Exception as e:
                 self.logger.error(f"Error processing batch {batch_index + 1}: {e}")
@@ -535,11 +460,11 @@ class BatchProcessor:
                     provider=self.llm_provider.provider_name,
                     timestamp=datetime.now(),
                     success=False,
-                    error_message=f"Integration processing failed: {str(e)}"
+                    error_message=f"Simple batch processing failed: {str(e)}"
                 )
         
-        # Return final integrated result
-        final_result = LLMResponse(
+        # Return final result
+        return LLMResponse(
             content=current_analysis or "",
             usage=accumulated_usage,
             model=self.llm_provider.default_model,
@@ -548,17 +473,6 @@ class BatchProcessor:
             success=True,
             error_message=None
         )
-        
-        # Validate final result
-        is_valid, validation_error = self.integration_manager.validate_integration_result(current_analysis)
-        if not is_valid:
-            self.logger.warning(f"Integration result validation failed: {validation_error}")
-            # Still return the result but log the warning
-        
-        self.logger.info(f"Progressive integration completed successfully. "
-                        f"Total tokens: {total_tokens_used}")
-        
-        return final_result
 
     async def _process_batches_concurrent(self, batches: List[List[Dict[str, Any]]], 
                                         prompt_template: str,
@@ -638,87 +552,6 @@ class BatchProcessor:
         
         return processed_results
     
-    async def _process_integration_batch(self, batch: List[Dict[str, Any]], 
-                                       prompt_template: str,
-                                       previous_analysis: str,
-                                       platform: str = "") -> LLMResponse:
-        """
-        Process a batch with integration context from previous analysis.
-        
-        Args:
-            batch: List of messages in the batch
-            prompt_template: Base prompt template
-            previous_analysis: Raw analysis result from previous batch
-            platform: Platform name for template selection
-            
-        Returns:
-            LLM response with integrated analysis
-        """
-        try:
-            # Create integration context for prompt using raw analysis text
-            integration_context = self.integration_manager.create_integration_prompt_context(
-                previous_analysis, platform
-            )
-            
-            # Import here to avoid circular dependency
-            from utils.link_generator import LinkGenerator
-            
-            # Format messages using unified method - platform agnostic
-            link_generator = LinkGenerator()
-            formatted_messages = link_generator.format_messages_unified(batch)
-            
-            # Create the integration prompt using the original template
-            prompt = prompt_template.format(
-                data=formatted_messages,
-                integration_context=integration_context
-            )
-            
-            # 预估token数量用于日志
-            estimated_tokens = self.llm_provider.estimate_tokens(prompt)
-            
-            self.logger.info(f"处理整合批次 {len(batch)} 条消息 (平台: {platform}, 预估 {estimated_tokens} tokens)")
-            
-            # Make the request with retry logic
-            for attempt in range(self.config.max_retries + 1):
-                try:
-                    response = await self.llm_provider.generate_response(prompt, platform=platform)
-                    
-                    if response.success:
-                        self.logger.debug(f"Integration batch completed with {response.token_count} tokens")
-                        return response
-                    elif attempt < self.config.max_retries:
-                        self.logger.warning(f"Integration batch attempt {attempt + 1} failed, retrying...")
-                        await asyncio.sleep(self.config.delay_between_batches * (attempt + 1))
-                    
-                except Exception as e:
-                    if attempt < self.config.max_retries:
-                        self.logger.warning(f"Integration batch attempt {attempt + 1} error: {e}, retrying...")
-                        await asyncio.sleep(self.config.delay_between_batches * (attempt + 1))
-                    else:
-                        raise
-            
-            # If we get here, all retries failed
-            return LLMResponse(
-                content="",
-                usage={},
-                model=self.llm_provider.default_model,
-                provider=self.llm_provider.provider_name,
-                timestamp=datetime.now(),
-                success=False,
-                error_message="All integration retry attempts failed"
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Failed to process integration batch: {e}")
-            return LLMResponse(
-                content="",
-                usage={},
-                model=self.llm_provider.default_model,
-                provider=self.llm_provider.provider_name,
-                timestamp=datetime.now(),
-                success=False,
-                error_message=f"Integration batch processing error: {str(e)}"
-            )
     
     async def _process_single_batch(self, batch: List[Dict[str, Any]], 
                                    prompt_template: str, 
@@ -991,6 +824,253 @@ class BatchProcessor:
             'estimated_time_seconds': estimated_time
         }
     
+    async def process_unified_multi_platform_messages(
+        self, 
+        all_platform_data: Dict[str, List[Dict[str, Any]]], 
+        prompt_template: PromptTemplate,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> BatchResult:
+        """
+        统一多平台分析 - 使用平台标签化数据处理
+        
+        Args:
+            all_platform_data: 所有平台数据字典 {platform: messages}
+            prompt_template: 提示词模板
+            progress_callback: 进度回调
+            
+        Returns:
+            统一的BatchResult
+        """
+        if not all_platform_data or not any(all_platform_data.values()):
+            self.logger.warning("No platform data to process")
+            return self._create_empty_batch_result("unified")
+        
+        start_time = time.time()
+        total_messages = sum(len(msgs) for msgs in all_platform_data.values())
+        
+        self.logger.info(f"Starting unified multi-platform analysis: {total_messages} total messages")
+        
+        # 创建平台标签化的批次数据
+        tagged_data_batches = self._create_platform_tagged_batches(all_platform_data, self.config.max_messages_per_batch)
+        
+        if len(tagged_data_batches) == 1:
+            # 单批次：直接处理
+            self.logger.info("Single batch processing for unified analysis")
+            return await self._process_single_tagged_batch(tagged_data_batches[0], prompt_template, total_messages, start_time)
+        else:
+            # 多批次：渐进式处理
+            self.logger.info(f"Multi-batch processing for unified analysis: {len(tagged_data_batches)} batches")
+            return await self._process_multi_tagged_batches(tagged_data_batches, prompt_template, total_messages, start_time, progress_callback)
+
+    async def _process_single_tagged_batch(self, batch_data: str, template: PromptTemplate, 
+                                         total_messages: int, start_time: float) -> BatchResult:
+        """处理单个标签化批次"""
+        try:
+            # 填充模板
+            prompt_content = template.template.format(
+                data=batch_data,
+                integration_context=""  # 单批次不需要前序结果
+            )
+            
+            # LLM处理
+            response = await self.llm_provider.generate_response(prompt_content)
+            
+            processing_time = time.time() - start_time
+            
+            if response.success:
+                return BatchResult(
+                    platform="unified",
+                    total_messages=total_messages,
+                    processed_messages=total_messages,
+                    successful_batches=1,
+                    failed_batches=0,
+                    total_tokens_used=response.token_count,
+                    total_cost=response.cost,
+                    processing_time=processing_time,
+                    summaries=[response.content],
+                    errors=[]
+                )
+            else:
+                return BatchResult(
+                    platform="unified", 
+                    total_messages=total_messages,
+                    processed_messages=0,
+                    successful_batches=0,
+                    failed_batches=1,
+                    total_tokens_used=0,
+                    total_cost=0.0,
+                    processing_time=processing_time,
+                    summaries=[],
+                    errors=[response.error_message or "LLM processing failed"]
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Single tagged batch processing failed: {e}")
+            processing_time = time.time() - start_time
+            return BatchResult(
+                platform="unified",
+                total_messages=total_messages,
+                processed_messages=0,
+                successful_batches=0,
+                failed_batches=1,
+                total_tokens_used=0,
+                total_cost=0.0,
+                processing_time=processing_time,
+                summaries=[],
+                errors=[str(e)]
+            )
+
+    async def _process_multi_tagged_batches(self, tagged_batches: List[str], template: PromptTemplate,
+                                          total_messages: int, start_time: float,
+                                          progress_callback: Optional[Callable[[int, int], None]] = None) -> BatchResult:
+        """多批次渐进式处理"""
+        total_tokens = 0
+        total_cost = 0.0
+        integration_context = ""  # 用于previous_analysis
+        successful_batches = 0
+        failed_batches = 0
+        errors = []
+        
+        for batch_idx, batch_data in enumerate(tagged_batches, 1):
+            try:
+                self.logger.info(f"Processing unified batch {batch_idx}/{len(tagged_batches)}")
+                
+                # 进度回调
+                if progress_callback:
+                    progress_callback(batch_idx, len(tagged_batches))
+                
+                # 填充模板（使用现有的变量名）
+                prompt_content = template.template.format(
+                    data=batch_data,
+                    integration_context=integration_context
+                )
+                
+                # LLM处理
+                response = await self.llm_provider.generate_response(prompt_content)
+                
+                if response.success:
+                    integration_context = response.content  # 下一批次的previous_analysis
+                    total_tokens += response.token_count
+                    total_cost += response.cost
+                    successful_batches += 1
+                    self.logger.info(f"Batch {batch_idx} completed successfully")
+                else:
+                    failed_batches += 1
+                    error_msg = response.error_message or f"Batch {batch_idx} LLM processing failed"
+                    errors.append(error_msg)
+                    self.logger.error(f"Batch {batch_idx} failed: {error_msg}")
+                
+                # 批次间延迟
+                if batch_idx < len(tagged_batches):
+                    delay = getattr(self.llm_config, 'delay_between_batches', 2)
+                    await asyncio.sleep(delay)
+                    
+            except Exception as e:
+                failed_batches += 1
+                error_msg = f"Batch {batch_idx} exception: {str(e)}"
+                errors.append(error_msg)
+                self.logger.error(error_msg)
+        
+        processing_time = time.time() - start_time
+        
+        # 返回最终结果（最后一批的分析结果包含了所有前批次的整合）
+        final_summary = integration_context if integration_context else ""
+        
+        return BatchResult(
+            platform="unified",
+            total_messages=total_messages,
+            processed_messages=total_messages if successful_batches > 0 else 0,
+            successful_batches=successful_batches,
+            failed_batches=failed_batches,
+            total_tokens_used=total_tokens,
+            total_cost=total_cost,
+            processing_time=processing_time,
+            summaries=[final_summary] if final_summary else [],
+            errors=errors
+        )
+
+    def _create_platform_tagged_batches(self, all_platform_data: Dict[str, List], batch_size: int) -> List[str]:
+        """
+        创建平台标签化的数据批次
+        
+        按平台顺序填充数据，达到batch_size就截断，下批次从截断点继续
+        """
+        # 按平台顺序合并所有消息
+        all_messages_with_platform = []
+        platform_order = ['twitter', 'telegram', 'gmail', 'discord']
+        
+        for platform in platform_order:
+            if platform in all_platform_data and all_platform_data[platform]:
+                for msg in all_platform_data[platform]:
+                    all_messages_with_platform.append((platform, msg))
+        
+        if not all_messages_with_platform:
+            return []
+        
+        # 按batch_size分批
+        batches = []
+        for i in range(0, len(all_messages_with_platform), batch_size):
+            batch_messages = all_messages_with_platform[i:i + batch_size]
+            
+            # 按平台组织当前批次的消息
+            current_batch_by_platform = {}
+            for platform, msg in batch_messages:
+                if platform not in current_batch_by_platform:
+                    current_batch_by_platform[platform] = []
+                current_batch_by_platform[platform].append(msg)
+            
+            # 生成平台标签化的数据格式
+            batch_data = self._format_batch_with_platform_tags(current_batch_by_platform)
+            batches.append(batch_data)
+        
+        return batches
+
+    def _format_batch_with_platform_tags(self, platform_messages: Dict[str, List]) -> str:
+        """为批次生成带平台标签的数据格式"""
+        from utils.link_generator import LinkGenerator
+        
+        platform_sections = []
+        platform_order = ['twitter', 'telegram', 'gmail', 'discord'] 
+        
+        # 不需要引用格式示例 - 统一格式化已处理
+        
+        link_generator = LinkGenerator()
+        
+        for platform in platform_order:
+            messages = platform_messages.get(platform, [])
+            
+            if messages:
+                # 格式化消息数据
+                formatted_data = link_generator.format_messages_unified(messages)
+                platform_section = f"""<{platform}_data>
+=== {platform.title()} 数据 ===
+
+{formatted_data}
+</{platform}_data>"""
+            else:
+                platform_section = f"""<{platform}_data>
+暂无{platform.title()}数据
+</{platform}_data>"""
+            
+            platform_sections.append(platform_section)
+        
+        return "\n\n".join(platform_sections)
+
+    def _create_empty_batch_result(self, platform: str) -> BatchResult:
+        """创建空的批次结果"""
+        return BatchResult(
+            platform=platform,
+            total_messages=0,
+            processed_messages=0,
+            successful_batches=0,
+            failed_batches=0,
+            total_tokens_used=0,
+            total_cost=0.0,
+            processing_time=0.0,
+            summaries=[],
+            errors=["No messages provided"]
+        )
+
     async def process_messages_with_template(self, 
                                            messages: List[Dict[str, Any]], 
                                            prompt_template: PromptTemplate,
@@ -1267,8 +1347,8 @@ class BatchProcessor:
                         errors=[f"Processing error: {str(e)}"]
                     )
             else:
-                # Multiple batches - use integration analysis
-                integration_response = await self._process_batches_with_integration(
+                # Multiple batches - use simplified processing
+                integration_response = await self._process_batches_simple(
                     batches, template_string, platform, progress_callback
                 )
                 

@@ -27,6 +27,7 @@ class LLMResponse:
     timestamp: datetime
     success: bool
     error_message: Optional[str] = None
+    cost: float = 0.0  # 估算的调用成本
     # 新增字段：具体的调用命令信息
     call_command: Optional[str] = None  # 具体的调用命令，如 "gemini -y < xxx_prompt.txt" 或 "API调用: OpenAI GPT-4"
     base_url: Optional[str] = None      # API调用的base_url

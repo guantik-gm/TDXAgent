@@ -58,6 +58,8 @@ class GeminiCliProvider(BaseLLMProvider):
         self.default_max_tokens = 4000
         
         self.logger = TDXLogger.get_logger("tdxagent.llm.gemini_cli")
+        # 获取主logger以便在控制台显示重要信息
+        self.main_logger = TDXLogger.get_logger("tdxagent")
         
         # Validate CLI availability
         self._validate_cli_availability()
@@ -159,6 +161,8 @@ class GeminiCliProvider(BaseLLMProvider):
             # Build CLI command
             cmd_str = self._build_cli_command(prompt_file)
             
+            # 在控制台显示AI命令执行信息
+            self.main_logger.info(f"🤖 执行AI命令: {cmd_str}")
             self.logger.info(f"Executing Gemini CLI command: {cmd_str}")
             self.logger.debug(f"Prompt file: {prompt_file}")
             self.logger.debug(f"Prompt length: {len(prompt)} characters")
@@ -225,6 +229,7 @@ class GeminiCliProvider(BaseLLMProvider):
                     timestamp=start_time,
                     success=False,
                     error_message=f"CLI execution failed: {full_error}",
+                    cost=0.0,
                     call_command=cmd_str,
                     base_url=None
                 )
@@ -256,6 +261,7 @@ class GeminiCliProvider(BaseLLMProvider):
                     timestamp=start_time,
                     success=False,
                     error_message="Empty response from Gemini CLI",
+                    cost=0.0,
                     call_command=cmd_str,
                     base_url=None
                 )
@@ -275,6 +281,9 @@ class GeminiCliProvider(BaseLLMProvider):
             # Calculate processing time
             processing_time = (datetime.now() - start_time).total_seconds()
             
+            # Estimate cost (Gemini CLI is typically free for basic usage)
+            estimated_cost = 0.0  # Gemini CLI 通常免费
+            
             response = LLMResponse(
                 content=output,
                 usage=usage,
@@ -283,6 +292,7 @@ class GeminiCliProvider(BaseLLMProvider):
                 timestamp=start_time,
                 success=True,
                 error_message=None,
+                cost=estimated_cost,
                 call_command=cmd_str,
                 base_url=None  # Gemini CLI doesn't use base URL
             )
@@ -291,6 +301,8 @@ class GeminiCliProvider(BaseLLMProvider):
             if self._collect_conversations:
                 self._record_conversation(prompt, response, processing_time)
             
+            # 在控制台显示AI响应信息
+            self.main_logger.info(f"🤖 AI响应完成: {total_tokens} tokens, {processing_time:.2f}s")
             self.logger.info(f"Gemini CLI response: {total_tokens} tokens, {processing_time:.2f}s")
             self.logger.debug(f"Gemini CLI response details: input={input_tokens}, output={output_tokens}, model={self.default_model}")
             
@@ -307,6 +319,7 @@ class GeminiCliProvider(BaseLLMProvider):
                 timestamp=start_time,
                 success=False,
                 error_message=f"Generation error: {str(e)}",
+                cost=0.0,
                 call_command=getattr(locals(), 'cmd_str', 'command not available'),
                 base_url=None
             )

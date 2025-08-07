@@ -108,13 +108,10 @@ class LLMConfig:
     timeout: int = 30
     max_requests_per_minute: int = 30
     max_tokens_per_minute: int = 50000
-    delay_between_batches: float = 3.0
+    delay_between_batches: float = 2.0  # 统一多平台分析架构的批次间延迟
     max_retries: int = 3
     retry_delay: float = 2.0
     enable_prompt_files: bool = True
-    # 缓冲时间配置（秒）- 提升AI响应成功率
-    multi_platform_delay: float = 4.0
-    multi_batch_delay: float = 3.0
     openai: Dict[str, Any] = field(default_factory=dict)
     gemini: Dict[str, Any] = field(default_factory=dict)
     claude_cli: Dict[str, Any] = field(default_factory=dict)
@@ -353,13 +350,10 @@ class ConfigManager:
             timeout=llm_config.get('timeout', 30),
             max_requests_per_minute=llm_config.get('max_requests_per_minute', 30),
             max_tokens_per_minute=llm_config.get('max_tokens_per_minute', 50000),
-            delay_between_batches=llm_config.get('delay_between_batches', 3.0),
+            delay_between_batches=llm_config.get('delay_between_batches', 2.0),
             max_retries=llm_config.get('max_retries', 3),
             retry_delay=llm_config.get('retry_delay', 2.0),
             enable_prompt_files=llm_config.get('enable_prompt_files', True),
-            # 缓冲时间配置
-            multi_platform_delay=llm_config.get('buffer_delays', {}).get('multi_platform_delay', 4.0),
-            multi_batch_delay=llm_config.get('buffer_delays', {}).get('multi_batch_delay', 3.0),
             openai=llm_config.get('openai', {}),
             gemini=llm_config.get('gemini', {}),
             claude_cli=llm_config.get('claude_cli', {}),

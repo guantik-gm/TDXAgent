@@ -215,6 +215,7 @@ class ClaudeProvider(BaseLLMProvider):
                     timestamp=start_time,
                     success=False,
                     error_message=f"CLI execution failed: {full_error}",
+                    cost=0.0,
                     call_command=cmd_str,
                     base_url=None
                 )
@@ -244,6 +245,7 @@ class ClaudeProvider(BaseLLMProvider):
                     timestamp=start_time,
                     success=False,
                     error_message="Empty response from Claude CLI",
+                    cost=0.0,
                     call_command=cmd_str,
                     base_url=None
                 )
@@ -263,6 +265,9 @@ class ClaudeProvider(BaseLLMProvider):
             # Calculate processing time
             processing_time = (datetime.now() - start_time).total_seconds()
             
+            # Estimate cost (Claude CLI usage varies, typically based on usage tiers)
+            estimated_cost = 0.0  # Claude CLI 基础使用通常免费
+            
             response = LLMResponse(
                 content=output,
                 usage=usage,
@@ -271,6 +276,7 @@ class ClaudeProvider(BaseLLMProvider):
                 timestamp=start_time,
                 success=True,
                 error_message=None,
+                cost=estimated_cost,
                 call_command=cmd_str,
                 base_url=None  # Claude CLI doesn't use base URL
             )
@@ -295,6 +301,7 @@ class ClaudeProvider(BaseLLMProvider):
                 timestamp=start_time,
                 success=False,
                 error_message=f"Generation error: {str(e)}",
+                cost=0.0,
                 call_command=getattr(locals(), 'cmd_str', 'command not available'),
                 base_url=None
             )
