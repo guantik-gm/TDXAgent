@@ -238,6 +238,7 @@ class BatchProcessor:
             )
         
         self.config = config or BatchConfig()
+        self.llm_config = llm_config  # 保存llm_config以供后续使用
         self.logger = TDXLogger.get_logger("tdxagent.processors.batch")
         
         if not self.config.validate():
@@ -923,6 +924,208 @@ class BatchProcessor:
         
         return deduplicated_data
     
+    async def _integrate_analysis_results(self, 
+                                         independent_results: Dict[str, BatchResult],
+                                         total_messages: int,
+                                         start_time: float,
+                                         prompt_template=None) -> BatchResult:
+        """
+        LLM智能整合各平台的独立分析结果 - 复用现有投资分析模板
+        
+        Args:
+            independent_results: 各平台独立分析结果 {platform: BatchResult}
+            total_messages: 总消息数
+            start_time: 开始时间
+            prompt_template: 投资分析模板 (可选，内部自动获取)
+            
+        Returns:
+            整合后的BatchResult
+        """
+        try:
+            # 获取纯投资分析模板 - 复用现有模板系统
+            if not prompt_template:
+                from processors.prompt_manager import PromptManager
+                prompt_manager = PromptManager()
+                prompt_template = await prompt_manager.get_template('pure_investment_analysis')
+                
+                if not prompt_template:
+                    raise Exception("无法获取纯投资分析模板")
+            
+            # 构建各平台独立分析结果的整合数据
+            integration_data = self._format_integration_data(independent_results)
+            
+            # 🎯 构建integration_context，激活模板的多平台整合模式
+            integration_context = f"""**多平台整合分析模式**
+
+你正在进行多平台投资分析的最终智能整合，需要基于各平台的独立分析结果生成统一的综合投资报告。
+
+**整合分析要求**：
+1. **整合关键洞察**：识别各平台分析中的共同主题和差异化观点，形成更全面的认知
+2. **综合投资建议**：结合各平台信息，提供更全面、更可靠的投资建议和机会识别  
+3. **交叉验证信息**：当多个平台提到相同信息时，增强其可信度和重要性
+4. **平衡不同视角**：公平体现各平台的独特价值和观点，避免单一平台信息主导
+5. **投资导向整合**：保持专业的投资分析风格，重点关注DeFi机会和风险提示
+
+**各平台独立分析结果**：
+{integration_data}
+
+**请基于以上各平台的独立分析结果进行智能整合**，使用标准的投资分析报告格式输出最终的综合分析报告。
+"""
+            
+            # 🎯 使用现有模板的format机制，复用所有模板特性
+            integration_prompt = prompt_template.template.format(
+                data="",  # 原始数据为空，整合模式使用integration_context
+                integration_context=integration_context  # 激活整合分析模式
+            )
+            
+            # 调用LLM进行整合分析 - 复用现有LLM调用机制
+            response = await self.llm_provider.generate_response(integration_prompt, platform="integration")
+            
+            # 构建整合分析的BatchResult
+            if response.success:
+                return self._create_integration_batch_result(response, independent_results, total_messages, start_time)
+            else:
+                # LLM整合调用失败
+                processing_time = time.time() - start_time
+                return BatchResult(
+                    platform="unified",
+                    total_messages=total_messages,
+                    processed_messages=sum(r.processed_messages for r in independent_results.values()),
+                    successful_batches=len(independent_results),
+                    failed_batches=1,  # 整合失败
+                    total_tokens_used=sum(r.total_tokens_used for r in independent_results.values()),
+                    total_cost=sum(r.total_cost for r in independent_results.values()),
+                    processing_time=processing_time,
+                    summaries=[],
+                    errors=[f"Integration LLM call failed: {response.error_message}"]
+                )
+                
+        except Exception as e:
+            processing_time = time.time() - start_time
+            self.logger.error(f"Integration analysis exception: {e}")
+            return BatchResult(
+                platform="unified",
+                total_messages=total_messages,
+                processed_messages=sum(r.processed_messages for r in independent_results.values()),
+                successful_batches=len(independent_results),
+                failed_batches=1,
+                total_tokens_used=sum(r.total_tokens_used for r in independent_results.values()),
+                total_cost=sum(r.total_cost for r in independent_results.values()),
+                processing_time=processing_time,
+                summaries=[],
+                errors=[f"Integration analysis exception: {str(e)}"]
+            )
+    
+    def _format_integration_data(self, independent_results: Dict[str, BatchResult]) -> str:
+        """
+        格式化整合分析的输入数据
+        
+        Args:
+            independent_results: 各平台独立分析结果
+            
+        Returns:
+            格式化后的整合分析输入数据
+        """
+        integration_sections = []
+        
+        # 平台显示名称映射
+        platform_display = {
+            'twitter': '🐦 Twitter/X',
+            'telegram': '✈️ Telegram',
+            'gmail': '📧 Gmail',
+            'discord': '💬 Discord'
+        }
+        
+        for platform, result in independent_results.items():
+            if not result.summaries:
+                continue
+                
+            display_name = platform_display.get(platform, f"📱 {platform.title()}")
+            
+            # 构建平台分析结果部分
+            platform_section = f"""## {display_name} 平台独立分析
+
+**处理统计**:
+- 分析消息: {result.processed_messages:,} 条
+- 成功批次: {result.successful_batches}
+- 处理时间: {result.processing_time:.1f} 秒
+- Token使用: {result.total_tokens_used:,}
+
+**分析结果**:
+{result.summaries[0] if result.summaries else '暂无分析内容'}
+
+---
+"""
+            integration_sections.append(platform_section)
+        
+        # 添加整体统计摘要
+        total_messages = sum(r.processed_messages for r in independent_results.values())
+        total_tokens = sum(r.total_tokens_used for r in independent_results.values())
+        total_platforms = len(independent_results)
+        
+        header = f"""# 多平台独立分析结果整合
+
+**整体统计**:
+- 涉及平台: {total_platforms} 个
+- 总消息数: {total_messages:,} 条
+- 总Token: {total_tokens:,}
+- 各平台分析均已完成
+
+**平台列表**: {', '.join(platform_display.get(p, p.title()) for p in independent_results.keys())}
+
+---
+
+"""
+        
+        return header + "\n".join(integration_sections)
+    
+    def _create_integration_batch_result(self, 
+                                       llm_response,
+                                       independent_results: Dict[str, BatchResult],
+                                       total_messages: int,
+                                       start_time: float) -> BatchResult:
+        """
+        构建整合分析的BatchResult
+        
+        Args:
+            llm_response: LLM整合分析响应
+            independent_results: 各平台独立分析结果
+            total_messages: 总消息数
+            start_time: 开始时间
+            
+        Returns:
+            整合分析的BatchResult
+        """
+        processing_time = time.time() - start_time
+        
+        # 汇总各平台的统计信息
+        total_tokens_used = sum(r.total_tokens_used for r in independent_results.values())
+        total_cost = sum(r.total_cost for r in independent_results.values())
+        total_processed_messages = sum(r.processed_messages for r in independent_results.values())
+        
+        # 加上整合分析的Token和成本
+        integration_tokens = getattr(llm_response, 'token_count', 0)
+        integration_cost = getattr(llm_response, 'cost', 0.0)
+        
+        # 创建整合结果，添加成功平台信息
+        result = BatchResult(
+            platform="unified",
+            total_messages=total_messages,
+            processed_messages=total_processed_messages,
+            successful_batches=len(independent_results) + 1,  # 各平台 + 整合分析
+            failed_batches=0,
+            total_tokens_used=total_tokens_used + integration_tokens,
+            total_cost=total_cost + integration_cost,
+            processing_time=processing_time,
+            summaries=[llm_response.content],  # 整合分析的最终结果
+            errors=[]
+        )
+        
+        # 🎯 添加成功分析的平台信息，供报告生成使用
+        result.successful_platforms = list(independent_results.keys())
+        
+        return result
+    
     async def process_unified_multi_platform_messages(
         self, 
         all_platform_data: Dict[str, List[Dict[str, Any]]], 
@@ -930,7 +1133,7 @@ class BatchProcessor:
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> BatchResult:
         """
-        统一多平台分析 - 使用平台标签化数据处理
+        独立平台分析 + LLM智能整合 - 让LLM专注于各平台数据后再整合
         
         Args:
             all_platform_data: 所有平台数据字典 {platform: messages}
@@ -938,7 +1141,7 @@ class BatchProcessor:
             progress_callback: 进度回调
             
         Returns:
-            统一的BatchResult
+            整合后的BatchResult
         """
         if not all_platform_data or not any(all_platform_data.values()):
             self.logger.warning("No platform data to process")
@@ -953,19 +1156,86 @@ class BatchProcessor:
         # 使用去重后的数据计算总消息数
         total_messages = sum(len(msgs) for msgs in deduplicated_data.values())
         
-        self.logger.info(f"Starting unified multi-platform analysis: {total_messages} total messages (after deduplication)")
+        self.logger.info(f"Starting independent platform analysis: {total_messages} total messages from {len(deduplicated_data)} platforms")
         
-        # 创建平台标签化的批次数据 - 使用去重后的数据
-        tagged_data_batches = self._create_platform_tagged_batches(deduplicated_data, self.config.max_messages_per_batch)
+        # 🎯 Step 1: 各平台独立分析 - 复用现有所有逻辑
+        independent_results = {}
+        successful_platforms = []
+        failed_platforms = []
         
-        if len(tagged_data_batches) == 1:
-            # 单批次：直接处理
-            self.logger.info("Single batch processing for unified analysis")
-            return await self._process_single_tagged_batch(tagged_data_batches[0], prompt_template, total_messages, start_time)
-        else:
-            # 多批次：渐进式处理
-            self.logger.info(f"Multi-batch processing for unified analysis: {len(tagged_data_batches)} batches")
-            return await self._process_multi_tagged_batches(tagged_data_batches, prompt_template, total_messages, start_time, progress_callback)
+        for platform_idx, (platform, messages) in enumerate(deduplicated_data.items(), 1):
+            if not messages:
+                self.logger.info(f"Skipping {platform} - no messages")
+                continue
+                
+            try:
+                # 进度回调
+                if progress_callback:
+                    progress_callback(platform_idx, len(deduplicated_data) + 1)  # +1 for integration step
+                
+                self.logger.info(f"🔍 独立分析 {platform}: {len(messages)} 条消息")
+                
+                # 完全复用现有的处理逻辑
+                platform_result = await self.process_messages_with_template(
+                    messages=messages,
+                    prompt_template=prompt_template,  # 复用现有纯投资分析模板
+                    platform=platform
+                )
+                
+                if platform_result.success_rate > 0:  # 有成功处理的消息
+                    independent_results[platform] = platform_result
+                    successful_platforms.append(platform)
+                    self.logger.info(f"✅ {platform} 独立分析完成: {platform_result.processed_messages} 消息")
+                else:
+                    failed_platforms.append(platform)
+                    self.logger.warning(f"❌ {platform} 独立分析失败")
+                    
+            except Exception as e:
+                failed_platforms.append(platform)
+                self.logger.error(f"❌ {platform} 独立分析异常: {e}")
+        
+        if not independent_results:
+            self.logger.error("所有平台的独立分析都失败了")
+            processing_time = time.time() - start_time
+            return BatchResult(
+                platform="unified",
+                total_messages=total_messages,
+                processed_messages=0,
+                successful_batches=0,
+                failed_batches=len(deduplicated_data),
+                total_tokens_used=0,
+                total_cost=0.0,
+                processing_time=processing_time,
+                summaries=[],
+                errors=["All platform independent analyses failed"]
+            )
+        
+        # 🎯 Step 2: LLM智能整合各平台分析结果
+        try:
+            if progress_callback:
+                progress_callback(len(deduplicated_data) + 1, len(deduplicated_data) + 1)
+                
+            self.logger.info(f"🤖 开始LLM智能整合 {len(independent_results)} 个平台的分析结果...")
+            integration_result = await self._integrate_analysis_results(independent_results, total_messages, start_time, prompt_template)
+            
+            self.logger.info(f"✅ 独立分析+整合完成: {len(successful_platforms)} 个平台成功")
+            return integration_result
+            
+        except Exception as e:
+            self.logger.error(f"❌ LLM整合分析失败: {e}")
+            processing_time = time.time() - start_time
+            return BatchResult(
+                platform="unified",
+                total_messages=total_messages,
+                processed_messages=sum(r.processed_messages for r in independent_results.values()),
+                successful_batches=len(successful_platforms),
+                failed_batches=len(failed_platforms) + 1,  # +1 for integration failure
+                total_tokens_used=sum(r.total_tokens_used for r in independent_results.values()),
+                total_cost=sum(r.total_cost for r in independent_results.values()),
+                processing_time=processing_time,
+                summaries=[],
+                errors=[f"Integration analysis failed: {str(e)}"]
+            )
 
     async def _process_single_tagged_batch(self, batch_data: str, template: PromptTemplate, 
                                          total_messages: int, start_time: float) -> BatchResult:

@@ -342,14 +342,23 @@ class TDXAgent:
                     f"完成统一多平台分析: {total_messages} 条消息来自 {len(all_platform_data)} 个平台"
                 )
                 
-                # 构建统一结果结构
+                # 🎯 构建独立分析+整合结果结构 - 只显示成功分析的平台
+                # 从BatchResult中获取成功分析的平台信息
+                successful_platforms = getattr(unified_result, 'successful_platforms', [])
+                
+                # 如果没有成功平台信息，fallback到所有有数据的平台
+                if not successful_platforms:
+                    successful_platforms = [p for p, msgs in all_platform_data.items() if len(msgs) > 0]
+                
                 results = {
                     'unified_analysis': unified_result,
                     'total_messages_analyzed': total_messages,
-                    'platforms_included': list(all_platform_data.keys()),
+                    'platforms_included': successful_platforms,  # 只显示参与成功分析的平台
+                    'platforms_attempted': list(all_platform_data.keys()),  # 所有尝试的平台
                     'platform_message_counts': {
                         platform: len(messages) 
                         for platform, messages in all_platform_data.items()
+                        if platform in successful_platforms
                     }
                 }
                 
