@@ -54,14 +54,14 @@ class TelegramScraper(BaseScraper):
         self.api_hash = config.get('api_hash')
         self.session_name = config.get('session_name', 'tdxagent_session')
         
-        # Simple group filtering using direct group_whitelist
-        self.group_whitelist = config.get('group_whitelist', [])
+        # 群组黑名单过滤 - 简单直接
+        self.group_blacklist = config.get('group_blacklist', [])
         self.case_sensitive = config.get('case_sensitive', False)
         self.partial_match = config.get('partial_match', True)
         
         # Convert to list if it's a set (for backward compatibility)
-        if isinstance(self.group_whitelist, set):
-            self.group_whitelist = list(self.group_whitelist)
+        if isinstance(self.group_blacklist, set):
+            self.group_blacklist = list(self.group_blacklist)
         
         self.max_messages = config.get('max_messages', 1000)  # 向后兼容
         self.max_messages_per_group = config.get('max_messages_per_group', self.max_messages)
@@ -78,12 +78,13 @@ class TelegramScraper(BaseScraper):
         # 用于跟踪总消息数
         self.total_messages_collected = 0
         
-        self.logger.info(f"Telegram群组关键词过滤: {len(self.group_whitelist)} 个关键词")
-        if self.group_whitelist:
-            self.logger.info(f"关键词列表: {self.group_whitelist}")
+        # 日志输出过滤配置
+        self.logger.info(f"Telegram群组黑名单过滤: {len(self.group_blacklist)} 个关键词")
+        if self.group_blacklist:
+            self.logger.info(f"黑名单关键词: {self.group_blacklist}")
             self.logger.info(f"区分大小写: {self.case_sensitive}, 部分匹配: {self.partial_match}")
         else:
-            self.logger.info("无关键词配置，将获取所有群组")
+            self.logger.info("黑名单为空，将获取所有群组")
         
         # Client instance
         self.client: Optional[TelegramClient] = None
@@ -296,13 +297,13 @@ class TelegramScraper(BaseScraper):
     
     def _filter_dialogs(self, dialogs) -> List[Any]:
         """
-        Filter dialogs based on configured filtering mode.
+        Filter dialogs based on blacklist keywords.
         
         Args:
             dialogs: List of Telegram dialogs
             
         Returns:
-            Filtered list of dialogs based on mode (exact, keywords, all)
+            Filtered list of dialogs (exclude blacklisted groups)
         """
         target_dialogs = []
         filtered_count = 0
@@ -311,33 +312,31 @@ class TelegramScraper(BaseScraper):
             # Only include groups and channels
             if isinstance(dialog.entity, (Channel, Chat)):
                 group_name = dialog.name or ""
-                should_include = False
+                should_include = True  # 默认包含所有群组
                 match_reason = ""
                 
-                # Simplified keyword-based filtering using group_whitelist
-                if self.group_whitelist:
-                    # Keywords matching using group_whitelist
-                    self.logger.debug(f"🔍 检查群组 '{group_name}' 是否匹配关键词: {self.group_whitelist}")
-                    for keyword in self.group_whitelist:
+                # 检查黑名单关键词
+                if self.group_blacklist:
+                    self.logger.debug(f"🔍 检查群组 '{group_name}' 是否匹配黑名单: {self.group_blacklist}")
+                    for keyword in self.group_blacklist:
                         match_result = self._matches_keyword(group_name, keyword)
-                        self.logger.debug(f"  - 关键词 '{keyword}': {'✅匹配' if match_result else '❌不匹配'}")
+                        self.logger.debug(f"  - 关键词 '{keyword}': {'🚫匹配(排除)' if match_result else '✅不匹配'}")
                         if match_result:
-                            should_include = True
-                            match_reason = f"关键词匹配: '{keyword}' in '{group_name}'"
+                            should_include = False
+                            match_reason = f"黑名单匹配排除: '{keyword}'"
                             break
-                    if not should_include:
-                        self.logger.debug(f"❌ 群组 '{group_name}' 无匹配关键词")
+                    if should_include:
+                        match_reason = "未匹配黑名单，包含群组"
                 else:
-                    # No keywords configured, include all groups
-                    should_include = True
-                    match_reason = "无关键词配置，包含所有群组"
+                    # 黑名单为空，包含所有群组
+                    match_reason = "黑名单为空，包含所有群组"
                 
                 if should_include:
                     target_dialogs.append(dialog)
                     self.logger.debug(f"✅ 包含群组: {group_name} ({match_reason})")
                 else:
                     filtered_count += 1
-                    self.logger.debug(f"❌ 过滤群组: {group_name} (不匹配过滤条件)")
+                    self.logger.debug(f"❌ 过滤群组: {group_name} ({match_reason})")
         
         self.logger.info(f"群组过滤结果: 包含 {len(target_dialogs)} 个群组，过滤掉 {filtered_count} 个群组")
         return target_dialogs
@@ -606,23 +605,21 @@ class TelegramScraper(BaseScraper):
                 if isinstance(dialog.entity, (Channel, Chat)):
                     group_name = dialog.name or ""
                     
-                    # Determine if group would be included based on current filter settings
-                    would_include = False
+                    # Determine if group would be included based on blacklist
+                    would_include = True  # 默认包含所有群组
                     match_info = ""
                     
-                    # Simplified keyword-based filtering using group_whitelist
-                    if self.group_whitelist:
-                        # Check if group name matches any keyword in whitelist
-                        for keyword in self.group_whitelist:
+                    # 检查是否匹配黑名单关键词
+                    if self.group_blacklist:
+                        for keyword in self.group_blacklist:
                             if self._matches_keyword(group_name, keyword):
-                                would_include = True
-                                match_info = f"关键词匹配: '{keyword}'"
+                                would_include = False
+                                match_info = f"黑名单匹配排除: '{keyword}'"
                                 break
-                        if not would_include:
-                            match_info = "无关键词匹配"
+                        if would_include:
+                            match_info = "未匹配黑名单，包含群组"
                     else:
-                        would_include = True
-                        match_info = "无关键词配置，包含所有群组"
+                        match_info = "黑名单为空，包含所有群组"
                     
                     group_info = {
                         'id': dialog.entity.id,
@@ -633,7 +630,7 @@ class TelegramScraper(BaseScraper):
                         'would_include': would_include,
                         'match_info': match_info,
                         # Legacy field for backward compatibility
-                        'in_whitelist': would_include
+                        'in_blacklist': not would_include
                     }
                     groups.append(group_info)
             
@@ -642,38 +639,38 @@ class TelegramScraper(BaseScraper):
         
         return groups
     
-    async def add_to_whitelist(self, group_name: str) -> bool:
+    async def add_to_blacklist(self, group_name: str) -> bool:
         """
-        Add a group to the whitelist.
+        Add a group to the blacklist.
         
         Args:
-            group_name: Name of the group to add to whitelist
+            group_name: Name of the group to add to blacklist
             
         Returns:
             True if added successfully
         """
-        if group_name not in self.group_whitelist:
-            self.group_whitelist.append(group_name)
-            self.logger.info(f"Added '{group_name}' to whitelist")
+        if group_name not in self.group_blacklist:
+            self.group_blacklist.append(group_name)
+            self.logger.info(f"Added '{group_name}' to blacklist")
             return True
         else:
-            self.logger.info(f"'{group_name}' already in whitelist")
+            self.logger.info(f"'{group_name}' already in blacklist")
             return True
     
-    async def remove_from_whitelist(self, group_name: str) -> bool:
+    async def remove_from_blacklist(self, group_name: str) -> bool:
         """
-        Remove a group from the whitelist.
+        Remove a group from the blacklist.
         
         Args:
-            group_name: Name of the group to remove from whitelist
+            group_name: Name of the group to remove from blacklist
             
         Returns:
             True if removed successfully
         """
-        if group_name in self.group_whitelist:
-            self.group_whitelist.remove(group_name)
-            self.logger.info(f"Removed '{group_name}' from whitelist")
+        if group_name in self.group_blacklist:
+            self.group_blacklist.remove(group_name)
+            self.logger.info(f"Removed '{group_name}' from blacklist")
             return True
         else:
-            self.logger.warning(f"'{group_name}' not found in whitelist")
+            self.logger.warning(f"'{group_name}' not found in blacklist")
             return False

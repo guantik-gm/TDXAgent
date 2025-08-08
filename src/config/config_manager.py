@@ -65,7 +65,12 @@ class TelegramConfig(PlatformConfig):
     api_id: str = ""
     api_hash: str = ""
     session_name: str = "tdxagent_session"
-    group_whitelist: list = field(default_factory=list)
+    
+    # 群组黑名单过滤 - 简单直接
+    group_blacklist: list = field(default_factory=list)
+    case_sensitive: bool = False
+    partial_match: bool = True
+    
     # 向后兼容的旧配置
     max_messages: int = 1000
     # 新的细粒度配置
@@ -306,7 +311,9 @@ class ConfigManager:
             api_id=telegram_config.get('api_id', ''),
             api_hash=telegram_config.get('api_hash', ''),
             session_name=telegram_config.get('session_name', 'tdxagent_session'),
-            group_whitelist=telegram_config.get('group_whitelist', []),
+            group_blacklist=telegram_config.get('group_blacklist', []),
+            case_sensitive=telegram_config.get('case_sensitive', False),
+            partial_match=telegram_config.get('partial_match', True),
             # 向后兼容：如果没有新配置，使用旧的max_messages
             max_messages=telegram_config.get('max_messages', 1000),
             max_messages_per_group=telegram_config.get('max_messages_per_group', telegram_config.get('max_messages', 1000)),
