@@ -83,11 +83,13 @@ class JSONLStorage:
         Returns:
             List of messages within the time range
         """
-        # Calculate the date range that might contain our target messages
+        # 🎯 改进：由于新数据按抓取日期存储，只需要扫描精确的日期范围
+        # 不再需要扩展日期范围，避免扫描不必要的文件
         start_date = start_time.date()
         end_date = end_time.date()
         
-        # Extend range by 1 day on each side to handle timezone edge cases
+        # 对于现有旧数据的向后兼容：仍然扩展范围以确保不遗漏
+        # 但新数据将主要集中在精确的日期范围内
         extended_start = date.fromordinal(max(1, start_date.toordinal() - 1))
         extended_end = date.fromordinal(end_date.toordinal() + 1)
         
@@ -95,7 +97,8 @@ class JSONLStorage:
         platform_dir = self.data_directory / platform
         self.logger.info(f"读取 {platform} 数据路径: {platform_dir}")
         self.logger.info(f"时间范围: {start_time} 到 {end_time}")
-        self.logger.info(f"扫描日期范围: {extended_start} 到 {extended_end}")
+        self.logger.info(f"优先扫描精确日期: {start_date} 到 {end_date}")
+        self.logger.info(f"向后兼容扫描范围: {extended_start} 到 {extended_end}")
         
         # 列出实际存在的文件
         if platform_dir.exists():
@@ -205,24 +208,23 @@ class JSONLStorage:
                 self.logger.warning("Message validation failed, skipping storage")
                 return False
             
-            # Add storage metadata
+            # Add storage metadata with version upgrade
             message['_storage'] = {
                 'stored_at': datetime.now().isoformat(),
                 'platform': platform,
-                'version': '1.0'
+                'version': '2.0',  # 🎯 版本升级：v2.0使用抓取时间存储
+                'storage_strategy': 'scraping_time'  # 标识新的存储策略
             }
             
-            # Determine file path based on message posted_at timestamp
-            posted_at = message.get('metadata', {}).get('posted_at')
-            if not posted_at:
-                self.logger.error(f"Message missing posted_at timestamp: {message.get('id', 'unknown')}")
-                return False
+            # 🎯 改进：按抓取时间组织文件，而不是发布时间
+            # 这样analyze时只需要扫描精确的时间范围，不会遗漏For You页面的跨时间推文
+            date_obj = date.today()  # 使用抓取日期
             
-            date_obj = self._extract_date_from_posted_at(posted_at)
-            if date_obj is None:
-                # Fallback to current date if posted_at parsing fails
-                self.logger.warning(f"Using current date as fallback for message {message.get('id', 'unknown')}")
-                date_obj = date.today()
+            # 保留原始逻辑作为向后兼容fallback（用于现有数据读取）
+            posted_at = message.get('metadata', {}).get('posted_at')
+            if posted_at:
+                # 保存原始发布时间到metadata中，用于时间过滤
+                pass  # posted_at already in metadata
             
             file_path = self._get_file_path(platform, date_obj)
             
@@ -261,8 +263,10 @@ class JSONLStorage:
         successful = 0
         failed = 0
         
-        # Group messages by date for efficient writing
-        messages_by_date: Dict[date, List[Dict[str, Any]]] = {}
+        # 🎯 改进：所有消息按抓取日期组织，不再按发布时间分散存储
+        # Group messages by scraping date for efficient writing
+        scraping_date = date.today()  # 使用抓取日期
+        messages_by_date: Dict[date, List[Dict[str, Any]]] = {scraping_date: []}
         
         for message in messages:
             # Validate if requested
@@ -270,28 +274,17 @@ class JSONLStorage:
                 failed += 1
                 continue
             
-            # Add storage metadata
+            # Add storage metadata with version upgrade
             message['_storage'] = {
                 'stored_at': datetime.now().isoformat(),
                 'platform': platform,
-                'version': '1.0'
+                'version': '2.0',  # 🎯 版本升级：v2.0使用抓取时间存储
+                'storage_strategy': 'scraping_time'  # 标识新的存储策略
             }
             
-            # Determine date based on message posted_at timestamp
-            posted_at = message.get('metadata', {}).get('posted_at')
-            if not posted_at:
-                self.logger.warning(f"Message missing posted_at timestamp: {message.get('id', 'unknown')}, using current date")
-                date_obj = date.today()
-            else:
-                date_obj = self._extract_date_from_posted_at(posted_at)
-                if date_obj is None:
-                    # Fallback to current date if posted_at parsing fails
-                    self.logger.warning(f"Using current date as fallback for message {message.get('id', 'unknown')}")
-                    date_obj = date.today()
-            
-            if date_obj not in messages_by_date:
-                messages_by_date[date_obj] = []
-            messages_by_date[date_obj].append(message)
+            # 所有消息都存储到同一个抓取日期文件中
+            # posted_at时间仍然保留在metadata中用于后续的时间过滤
+            messages_by_date[scraping_date].append(message)
         
         # Write messages grouped by date
         for date_obj, date_messages in messages_by_date.items():
