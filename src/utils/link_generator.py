@@ -570,7 +570,7 @@ class LinkGenerator:
             following_formatted = self.format_messages_with_inline_links(following_messages, 'twitter')
             if following_formatted.strip():
                 following_section = f"""<my_following_data>
-⚠️ 该部分数据为我的重点关注推文，必须以此为基础一个不漏地进行分析
+⚠️ 该部分数据为我的重点关注推文，必须一个不漏地进行深度分析，优先级最高
 
 {following_formatted.strip()}
 </my_following_data>"""
@@ -581,7 +581,7 @@ class LinkGenerator:
             other_formatted = self.format_messages_with_inline_links(other_messages, 'twitter')
             if other_formatted.strip():
                 other_section = f"""<other_data>
-以下为算法推荐和其他来源的推文数据：
+以下为算法推荐和其他来源的推文数据，作为趋势补充参考，如果你认为其中有和 <my_following_data> 重点关注推文中类似的主题或者信息，请务必采取结合重点推文进行分析：
 
 {other_formatted.strip()}
 </other_data>"""
