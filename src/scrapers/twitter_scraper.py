@@ -597,7 +597,7 @@ class TwitterScraper(BaseScraper):
             self.logger.info(f"Scroll {scroll_count + 1} - Extracting tweets from current view...")
             
             # Extract tweets from current view
-            current_tweets = await self._extract_tweets_from_page()
+            current_tweets = await self._extract_tweets_from_page(timeline_type)
             
             # 去重处理和时间过滤
             new_tweets = []
@@ -744,7 +744,7 @@ class TwitterScraper(BaseScraper):
             self.logger.info(f"Scroll {scroll_count + 1} - Extracting tweets from current view...")
             
             # Extract tweets from current view
-            current_tweets = await self._extract_tweets_from_page()
+            current_tweets = await self._extract_tweets_from_page(timeline_type)
             
             # 去重处理和严格的时间过滤
             new_tweets = []
@@ -876,7 +876,7 @@ class TwitterScraper(BaseScraper):
             self.logger.info(f"Scroll {scroll_count + 1} - Extracting tweets from current view...")
             
             # Extract tweets from current view
-            current_tweets = await self._extract_tweets_from_page()
+            current_tweets = await self._extract_tweets_from_page(timeline_type)
             
             # 去重处理和智能时间检查（支持转发推文时间判断）
             new_tweets = []
@@ -990,8 +990,12 @@ class TwitterScraper(BaseScraper):
         self.logger.info(f"基于时间的收集完成：收集了 {len(tweets)} 条推文")
         return tweets
     
-    async def _extract_tweets_from_page(self) -> List[Dict[str, Any]]:
-        """Extract tweet data from current page with improved stability."""
+    async def _extract_tweets_from_page(self, timeline_source: str = 'unknown') -> List[Dict[str, Any]]:
+        """Extract tweet data from current page with improved stability.
+        
+        Args:
+            timeline_source: Source timeline ('following', 'for_you', or 'unknown')
+        """
         tweets = []
         
         try:
@@ -1043,7 +1047,7 @@ class TwitterScraper(BaseScraper):
                 batch_tasks = []
                 for i, element in enumerate(batch_elements):
                     global_index = batch_start + i
-                    task = self._extract_single_tweet_safe(element, global_index + 1, element_count)
+                    task = self._extract_single_tweet_safe(element, global_index + 1, element_count, timeline_source)
                     batch_tasks.append(task)
                 
                 # 等待批次完成，设置合理超时
@@ -1075,8 +1079,15 @@ class TwitterScraper(BaseScraper):
         
         return tweets
     
-    async def _extract_single_tweet_safe(self, element, index: int, total: int) -> Optional[Dict[str, Any]]:
-        """安全地提取单个推文数据，包含容错处理"""
+    async def _extract_single_tweet_safe(self, element, index: int, total: int, timeline_source: str = 'unknown') -> Optional[Dict[str, Any]]:
+        """安全地提取单个推文数据，包含容错处理
+        
+        Args:
+            element: Tweet DOM element
+            index: Current tweet index
+            total: Total tweet count
+            timeline_source: Source timeline ('following', 'for_you', or 'unknown')
+        """
         try:
             self.logger.debug(f"Extracting data from tweet {index}/{total}...")
             
@@ -1091,7 +1102,7 @@ class TwitterScraper(BaseScraper):
             # 提取推文数据，增加超时时间
             try:
                 tweet_data = await asyncio.wait_for(
-                    self._extract_tweet_data(element), 
+                    self._extract_tweet_data(element, timeline_source), 
                     timeout=15.0  # 增加到15秒超时
                 )
                 
@@ -1110,8 +1121,13 @@ class TwitterScraper(BaseScraper):
             self.logger.warning(f"Failed to extract tweet {index} data: {e}")
             return None
     
-    async def _extract_tweet_data(self, tweet_element) -> Optional[Dict[str, Any]]:
-        """Extract data from a single tweet element with timeout protection."""
+    async def _extract_tweet_data(self, tweet_element, timeline_source: str = 'unknown') -> Optional[Dict[str, Any]]:
+        """Extract data from a single tweet element with timeout protection.
+        
+        Args:
+            tweet_element: The tweet DOM element to extract data from
+            timeline_source: Source timeline ('following', 'for_you', or 'unknown')
+        """
         try:
             # 提取推文的完整数据，包括长推文处理，每个步骤都有超时保护
             
@@ -1198,7 +1214,8 @@ class TwitterScraper(BaseScraper):
                 'media_urls': media_urls,
                 'engagement': engagement,
                 'quoted_tweet': quoted_tweet,
-                'is_retweet': is_retweet  # 添加转发标识
+                'is_retweet': is_retweet,  # 添加转发标识
+                'timeline_source': timeline_source  # 添加时间线来源标识
             }
             
             return tweet_data

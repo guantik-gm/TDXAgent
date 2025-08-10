@@ -484,13 +484,14 @@ class LinkGenerator:
     
     # ========== 新增统一格式化方法 ==========
     
-    def format_messages_unified(self, messages: list) -> str:
+    def format_messages_unified(self, messages: list, enable_twitter_layering: bool = True) -> str:
         """
         统一格式化所有平台消息 - AI完全平台无关。
         自动按平台分组处理，应用各平台最优化的格式。
         
         Args:
             messages: List of message dictionaries from any platform
+            enable_twitter_layering: Whether to enable Twitter timeline source layering
             
         Returns:
             Formatted string with unified citation format
@@ -514,8 +515,11 @@ class LinkGenerator:
                 # 使用Telegram群组优化格式
                 formatted_section = self.format_telegram_messages_grouped(platform_messages)
             elif platform == 'twitter':
-                # 使用Twitter内联链接格式
-                formatted_section = self.format_messages_with_inline_links(platform_messages, 'twitter')
+                # 使用Twitter分层或普通格式
+                if enable_twitter_layering:
+                    formatted_section = self.format_twitter_messages_layered(platform_messages)
+                else:
+                    formatted_section = self.format_messages_with_inline_links(platform_messages, 'twitter')
             elif platform == 'gmail':
                 # 使用Gmail内联链接格式
                 formatted_section = self.format_messages_with_inline_links(platform_messages, 'gmail')
@@ -528,6 +532,60 @@ class LinkGenerator:
             
             if formatted_section.strip():
                 formatted_sections.append(formatted_section)
+        
+        return '\n\n'.join(formatted_sections)
+    
+    def format_twitter_messages_layered(self, messages: list) -> str:
+        """
+        Twitter分层格式化 - 根据timeline_source分为following和其他数据。
+        Following数据优先展示，其他数据次要展示。
+        
+        Args:
+            messages: List of Twitter message dictionaries
+            
+        Returns:
+            Layered formatted string with <my_following_data> and <other_data> tags
+        """
+        if not messages:
+            return ""
+        
+        # 根据timeline_source分层
+        following_messages = []
+        other_messages = []
+        
+        for message in messages:
+            platform_specific = message.get('metadata', {}).get('platform_specific', {})
+            timeline_source = platform_specific.get('timeline_source')
+            
+            if timeline_source == 'following':
+                following_messages.append(message)
+            else:
+                # for_you, unknown或其他来源都归到other_data
+                other_messages.append(message)
+        
+        formatted_sections = []
+        
+        # 优先处理Following数据（重点关注）
+        if following_messages:
+            following_formatted = self.format_messages_with_inline_links(following_messages, 'twitter')
+            if following_formatted.strip():
+                following_section = f"""<my_following_data>
+⚠️ 该部分数据为我的重点关注推文，必须以此为基础一个不漏地进行分析
+
+{following_formatted.strip()}
+</my_following_data>"""
+                formatted_sections.append(following_section)
+        
+        # 处理其他数据（For You推荐等）
+        if other_messages:
+            other_formatted = self.format_messages_with_inline_links(other_messages, 'twitter')
+            if other_formatted.strip():
+                other_section = f"""<other_data>
+以下为算法推荐和其他来源的推文数据：
+
+{other_formatted.strip()}
+</other_data>"""
+                formatted_sections.append(other_section)
         
         return '\n\n'.join(formatted_sections)
     

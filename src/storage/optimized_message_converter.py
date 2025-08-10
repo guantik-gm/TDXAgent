@@ -158,7 +158,16 @@ class OptimizedMessageConverter:
             
             # 添加转发标识（如果是转发）
             if raw_message.get('is_retweet'):
+                if 'platform_specific' not in metadata:
+                    metadata['platform_specific'] = {}
                 metadata['platform_specific']['is_retweet'] = True
+            
+            # 添加timeline来源标识
+            timeline_source = raw_message.get('timeline_source')
+            if timeline_source and timeline_source != 'unknown':
+                if 'platform_specific' not in metadata:
+                    metadata['platform_specific'] = {}
+                metadata['platform_specific']['timeline_source'] = timeline_source
             
             # 上下文（Twitter不需要频道信息，但验证器需要这个字段）
             result = {

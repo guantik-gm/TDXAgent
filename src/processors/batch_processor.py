@@ -431,7 +431,7 @@ class BatchProcessor:
                 
                 # Format messages using unified method
                 link_generator = LinkGenerator()
-                formatted_messages = link_generator.format_messages_unified(batch)
+                formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True)
                 
                 # Create prompt with integration context if not first batch
                 prompt = prompt_template.format(
@@ -580,7 +580,7 @@ class BatchProcessor:
         
         # Format messages using unified method - platform agnostic
         link_generator = LinkGenerator()
-        formatted_messages = link_generator.format_messages_unified(batch)
+        formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True)
         
         # Create the prompt with all required variables
         prompt = prompt_template.format(
@@ -1501,7 +1501,7 @@ class BatchProcessor:
             
             if messages:
                 # 格式化消息数据
-                formatted_data = link_generator.format_messages_unified(messages)
+                formatted_data = link_generator.format_messages_unified(messages, enable_twitter_layering=True)
                 display_name = platform_display.get(platform, platform.title())
                 
                 platform_section = f"""<{platform}_data>
@@ -1696,7 +1696,7 @@ class BatchProcessor:
                 batch_messages = batches[0]
                 try:
                     # Format this batch of messages using unified method - platform agnostic
-                    formatted_batch = link_generator.format_messages_unified(batch_messages)
+                    formatted_batch = link_generator.format_messages_unified(batch_messages, enable_twitter_layering=True)
                     
                     # Create prompt for this batch
                     batch_prompt = template_string.format(
