@@ -702,12 +702,17 @@ class ReportGenerator:
             elif end_marker in line and "===" in line:
                 end_positions.append(i)
         
-        # 匹配开始和结束位置
+        # 匹配开始和结束位置 - 修复：确保每个开始都匹配到正确的结束
         for start_pos in start_positions:
+            # 找到这个开始位置之后的第一个结束位置
+            matching_end = None
             for end_pos in end_positions:
                 if end_pos > start_pos:
-                    task_ranges.append((start_pos, end_pos + 1))
+                    matching_end = end_pos
                     break
+            
+            if matching_end is not None:
+                task_ranges.append((start_pos, matching_end + 1))
         
         if not task_ranges:
             return ""  # 没找到有效的任务范围，返回空字符串
