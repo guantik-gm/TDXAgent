@@ -647,10 +647,17 @@ class ReportGenerator:
             格式化的日志内容字符串，如果没有日志则返回空字符串
         """
         try:
-            log_dir = Path(self.output_directory).parent / "logs"
-            cron_log_file = log_dir / "cron_analyze.log"
+            # 使用配置管理器获取正确的数据目录
+            if self.config_manager:
+                data_directory = self.config_manager.app.data_directory
+                cron_log_file = Path(data_directory) / "logs" / "cron_analyze.log"
+            else:
+                # 向后兼容：如果没有配置管理器，使用项目根目录
+                import os
+                project_root = Path(os.path.abspath(__file__)).parent.parent.parent
+                cron_log_file = project_root / "TDXAgent_Data" / "logs" / "cron_analyze.log"
             
-            # 只检查 cron_analyze.log
+            # 检查日志文件是否存在且有内容
             if not cron_log_file.exists() or cron_log_file.stat().st_size < 100:
                 return ""  # 返回空字符串，附录中会显示空内容
             

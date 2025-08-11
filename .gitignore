@@ -5,7 +5,9 @@ config.yaml.bak
 .env
 .env.*
 
+# 认证和会话文件
 *.session
+*.session-journal
 *.key
 *.pem
 *.crt
