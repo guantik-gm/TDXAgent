@@ -30,7 +30,7 @@ class ReportGenerator:
     - Multi-language support
     """
     
-    def __init__(self, output_directory: str = "TDXAgent_Data/reports", start_time: Optional[datetime] = None, hours_back: Optional[int] = None):
+    def __init__(self, output_directory: str = "TDXAgent_Data/reports", start_time: Optional[datetime] = None, hours_back: Optional[int] = None, config_manager=None):
         """
         Initialize report generator.
         
@@ -38,6 +38,7 @@ class ReportGenerator:
             output_directory: Directory to save reports
             start_time: Program start time for filename generation
             hours_back: Hours of data collected for filename generation
+            config_manager: Configuration manager instance (optional)
         """
         self.output_directory = Path(output_directory)
         # Use UTC+8 timezone for start_time
@@ -47,6 +48,9 @@ class ReportGenerator:
         self.hours_back = hours_back
         self.logger = TDXLogger.get_logger("tdxagent.processors.reports")
         
+        # Store config manager for accessing configuration
+        self.config_manager = config_manager
+        
         # Report templates
         self.templates = {
             'summary': self._get_summary_template(),
@@ -55,6 +59,18 @@ class ReportGenerator:
         }
         
         self.logger.info(f"Initialized report generator: {self.output_directory}")
+    
+    def _should_include_execution_logs(self) -> bool:
+        """
+        检查配置是否启用了执行日志包含功能
+        
+        Returns:
+            True if execution logs should be included, False otherwise
+        """
+        if self.config_manager is None:
+            return False
+            
+        return self.config_manager.output.get('include_execution_logs', False)
     
     def _generate_filename(self, prefix: str) -> str:
         """
@@ -248,10 +264,26 @@ class ReportGenerator:
         else:
             content += "暂无 AI 分析结果。\n\n"
         
-        # Add simple footer
-        content += f"""---
+        # Add appendix with execution logs (only if enabled in config)
+        if self._should_include_execution_logs():
+            execution_logs = self._extract_task_logs(self.start_time, "ANALYZE")
+            content += f"""
+# 附录
 
-*报告由 TDXAgent 自动生成 - {report_time}*
+## 执行日志
+
+以下是本次分析任务的完整执行日志：
+
+```log
+{execution_logs}
+```
+
+---
+
+"""
+        
+        # Add simple footer
+        content += f"""*报告由 TDXAgent 自动生成 - {report_time}*
 """
         
         return content
@@ -304,9 +336,26 @@ class ReportGenerator:
 ## 重新分析
 解决错误后运行: `python src/main.py analyze --hours {self.hours_back or 12}`
 
----
-*{report_time} - TDXAgent*
 """
+        
+        # Add appendix with execution logs (only if enabled in config)
+        if self._should_include_execution_logs():
+            content += f"""# 附录
+
+## 执行日志
+
+错误发生前的完整执行过程：
+
+```log
+{self._extract_task_logs(self.start_time, "ANALYZE")}
+```
+
+*通过执行日志可以帮助诊断问题原因*
+
+---
+"""
+        
+        content += f"*{report_time} - TDXAgent*"
         
         return content
     
@@ -585,3 +634,104 @@ class ReportGenerator:
                 for detail in empty_batches
             ]
         }
+    
+    def _extract_task_logs(self, start_time: datetime, task_type: str = "ANALYZE") -> str:
+        """
+        提取本次任务的执行日志
+        
+        Args:
+            start_time: 任务开始时间 
+            task_type: 任务类型 (ANALYZE, COLLECT等)
+            
+        Returns:
+            格式化的日志内容字符串，如果没有日志则返回空字符串
+        """
+        try:
+            log_dir = Path(self.output_directory).parent / "logs"
+            cron_log_file = log_dir / "cron_analyze.log"
+            
+            # 只检查 cron_analyze.log
+            if not cron_log_file.exists() or cron_log_file.stat().st_size < 100:
+                return ""  # 返回空字符串，附录中会显示空内容
+            
+            # 读取日志文件
+            with open(cron_log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # 使用Shell脚本边界标识提取最后一次分析任务的日志
+            return self._extract_from_cron_log(lines, task_type)
+                
+        except Exception as e:
+            self.logger.error(f"Failed to extract task logs: {e}")
+            return ""  # 出错时也返回空字符串
+    
+    def _extract_from_cron_log(self, lines: List[str], task_type: str) -> str:
+        """
+        从cron日志中提取任务日志（使用Shell脚本边界标识）
+        
+        Args:
+            lines: 日志行列表
+            task_type: 任务类型
+            
+        Returns:
+            清理后的日志字符串，如果没有找到有效日志则返回空字符串
+        """
+        # 查找Shell脚本的开始和结束标识
+        if task_type.upper() == "ANALYZE":
+            start_marker = "开始数据分析"
+            end_marker = "数据分析结束"
+        else:
+            start_marker = f"开始数据{task_type.lower()}"
+            end_marker = f"数据{task_type.lower()}结束"
+        
+        # 找到所有开始和结束标识的位置，构建完整的任务范围
+        task_ranges = []
+        start_positions = []
+        end_positions = []
+        
+        for i, line in enumerate(lines):
+            if start_marker in line and "===" in line:
+                start_positions.append(i)
+            elif end_marker in line and "===" in line:
+                end_positions.append(i)
+        
+        # 匹配开始和结束位置
+        for start_pos in start_positions:
+            for end_pos in end_positions:
+                if end_pos > start_pos:
+                    task_ranges.append((start_pos, end_pos + 1))
+                    break
+        
+        if not task_ranges:
+            return ""  # 没找到有效的任务范围，返回空字符串
+        
+        # 取最后一个完整的任务范围
+        start_pos, end_pos = task_ranges[-1]
+        task_logs = lines[start_pos:end_pos]
+        
+        return self._clean_log_lines(task_logs)
+    
+    def _clean_log_lines(self, lines: List[str]) -> str:
+        """
+        清理日志行，移除敏感信息
+        
+        Args:
+            lines: 日志行列表
+            
+        Returns:
+            清理后的日志字符串，如果没有日志行则返回空字符串
+        """
+        if not lines:
+            return ""
+            
+        cleaned_lines = []
+        for line in lines:
+            cleaned = line.strip()
+            # 更精确的敏感信息脱敏（只针对真正的敏感信息）
+            sensitive_patterns = ['api_key=', 'token=', 'password=', 'secret=', 'Bearer ', 'Authorization:']
+            if any(pattern in cleaned for pattern in sensitive_patterns):
+                # 保留行的结构，但隐藏敏感内容
+                cleaned = cleaned[:50] + "***[敏感信息已隐藏]" if len(cleaned) > 50 else cleaned + "***"
+            cleaned_lines.append(cleaned)
+        
+        return '\n'.join(cleaned_lines)

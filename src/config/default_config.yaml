@@ -251,3 +251,6 @@ output:
   # 是否包含媒体文件信息
   include_media: true
   
+  # 是否在报告附录中包含执行日志（默认关闭）
+  include_execution_logs: false
+  

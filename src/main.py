@@ -68,7 +68,7 @@ class TDXAgent:
         
         # Get reports directory from config (fallback to default)
         reports_dir = self.config_manager.output.get('reports_directory', f"{self.config_manager.app.data_directory}/reports")
-        self.report_generator = ReportGenerator(reports_dir)
+        self.report_generator = ReportGenerator(reports_dir, config_manager=self.config_manager)
         
         # Track execution start time for reports (UTC+8)
         from datetime import timedelta
