@@ -266,7 +266,7 @@ class ReportGenerator:
         
         # Add appendix with execution logs (only if enabled in config)
         if self._should_include_execution_logs():
-            execution_logs = self._extract_task_logs(self.start_time, "ANALYZE")
+            execution_logs = self._extract_task_logs("ANALYZE")
             content += f"""
 # 附录
 
@@ -635,12 +635,11 @@ class ReportGenerator:
             ]
         }
     
-    def _extract_task_logs(self, start_time: datetime, task_type: str = "ANALYZE") -> str:
+    def _extract_task_logs(self, task_type: str = "ANALYZE") -> str:
         """
-        提取本次任务的执行日志
+        提取最后一次任务的执行日志
         
         Args:
-            start_time: 任务开始时间 
             task_type: 任务类型 (ANALYZE, COLLECT等)
             
         Returns:
@@ -691,35 +690,28 @@ class ReportGenerator:
             start_marker = f"开始数据{task_type.lower()}"
             end_marker = f"数据{task_type.lower()}结束"
         
-        # 找到所有开始和结束标识的位置，构建完整的任务范围
-        task_ranges = []
-        start_positions = []
-        end_positions = []
+        # 直接找到最后一个开始标识和最后一个结束标识
+        last_start_pos = None
+        last_end_pos = None
         
-        for i, line in enumerate(lines):
-            if start_marker in line and "===" in line:
-                start_positions.append(i)
-            elif end_marker in line and "===" in line:
-                end_positions.append(i)
+        # 从后往前查找最后一个开始标识
+        for i in range(len(lines) - 1, -1, -1):
+            if start_marker in lines[i] and "===" in lines[i]:
+                last_start_pos = i
+                break
         
-        # 匹配开始和结束位置 - 修复：确保每个开始都匹配到正确的结束
-        for start_pos in start_positions:
-            # 找到这个开始位置之后的第一个结束位置
-            matching_end = None
-            for end_pos in end_positions:
-                if end_pos > start_pos:
-                    matching_end = end_pos
-                    break
-            
-            if matching_end is not None:
-                task_ranges.append((start_pos, matching_end + 1))
+        # 从后往前查找最后一个结束标识
+        for i in range(len(lines) - 1, -1, -1):
+            if end_marker in lines[i] and "===" in lines[i]:
+                last_end_pos = i
+                break
         
-        if not task_ranges:
+        # 必须同时找到开始和结束标识，且结束在开始之后
+        if last_start_pos is None or last_end_pos is None or last_end_pos <= last_start_pos:
             return ""  # 没找到有效的任务范围，返回空字符串
         
-        # 取最后一个完整的任务范围
-        start_pos, end_pos = task_ranges[-1]
-        task_logs = lines[start_pos:end_pos]
+        # 提取最后一次完整执行的日志
+        task_logs = lines[last_start_pos:last_end_pos + 1]
         
         return self._clean_log_lines(task_logs)
     
