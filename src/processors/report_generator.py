@@ -706,9 +706,28 @@ class ReportGenerator:
                 last_end_pos = i
                 break
         
-        # 必须同时找到开始和结束标识，且结束在开始之后
-        if last_start_pos is None or last_end_pos is None or last_end_pos <= last_start_pos:
-            return ""  # 没找到有效的任务范围，返回空字符串
+        # 必须同时找到开始和结束标识
+        if last_start_pos is None or last_end_pos is None:
+            return ""  # 没找到开始或结束标识
+        
+        # 如果最后一个开始标识没有对应的结束标识（任务还在运行），
+        # 则查找倒数第二个完成的任务
+        if last_end_pos <= last_start_pos:
+            # 查找倒数第二个开始标识
+            second_last_start = None
+            start_count = 0
+            for i in range(len(lines) - 1, -1, -1):
+                if start_marker in lines[i] and "===" in lines[i]:
+                    start_count += 1
+                    if start_count == 2:  # 倒数第二个
+                        second_last_start = i
+                        break
+            
+            if second_last_start is not None and last_end_pos > second_last_start:
+                # 使用倒数第二个完成的任务
+                last_start_pos = second_last_start
+            else:
+                return ""  # 没找到有效的完成任务
         
         # 提取最后一次完整执行的日志
         task_logs = lines[last_start_pos:last_end_pos + 1]
