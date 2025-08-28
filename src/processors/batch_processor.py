@@ -33,6 +33,7 @@ class BatchExecutionDetail:
     llm_command: str = ""   # 具体的LLM调用命令，如 "gemini -y < xxx_prompt.txt" 或 "API调用: gpt-4"
     llm_provider: str = ""  # LLM提供商，如 "claude_cli", "openai", "gemini_cli"
     model_name: str = ""    # 模型名称，如 "gpt-4", "claude-3-sonnet"
+    llm_response: Optional['LLMResponse'] = None  # 完整的LLM响应对象，用于提取提示词文件路径
     
     @property
     def has_meaningful_content(self) -> bool:
@@ -665,7 +666,8 @@ class BatchProcessor:
                 processing_time=0.0,  # 这里不计算时间，主要用于质量检测
                 response_content=response.content,
                 llm_command=getattr(response, 'call_command', 'command not available'),
-                command_type="process_batch_with_quality_retry"
+                command_type="process_batch_with_quality_retry",
+                llm_response=response  # 传递完整的LLM响应对象
             )
             
             # 检查响应质量
@@ -1107,7 +1109,22 @@ class BatchProcessor:
         integration_tokens = getattr(llm_response, 'token_count', 0)
         integration_cost = getattr(llm_response, 'cost', 0.0)
         
-        # 创建整合结果，添加成功平台信息
+        # 创建整合分析的BatchExecutionDetail
+        integration_batch_detail = BatchExecutionDetail(
+            batch_number=1,  # 整合分析作为单独批次
+            message_count=total_messages,
+            tokens_used=integration_tokens,
+            processing_time=processing_time,
+            success=llm_response.success,
+            response_content=llm_response.content,
+            command_type="integration_analysis",
+            llm_command=getattr(llm_response, 'call_command', 'integration analysis'),
+            llm_provider=getattr(llm_response, 'provider', 'unknown'),
+            model_name=getattr(llm_response, 'model', 'unknown'),
+            llm_response=llm_response  # 关键：传递完整的LLM响应对象
+        )
+        
+        # 创建整合结果
         result = BatchResult(
             platform="unified",
             total_messages=total_messages,
@@ -1118,11 +1135,27 @@ class BatchProcessor:
             total_cost=total_cost + integration_cost,
             processing_time=processing_time,
             summaries=[llm_response.content],  # 整合分析的最终结果
-            errors=[]
+            errors=[],
+            batch_details=[integration_batch_detail]  # 只需要整合分析的批次详情
         )
         
         # 🎯 添加成功分析的平台信息，供报告生成使用
         result.successful_platforms = list(independent_results.keys())
+        
+        # 🎯 收集所有提示词文件路径供报告使用
+        prompt_file_paths = []
+        # 收集各平台的提示词文件路径
+        for platform_result in independent_results.values():
+            for batch_detail in platform_result.batch_details or []:
+                if hasattr(batch_detail, 'llm_response') and batch_detail.llm_response:
+                    if hasattr(batch_detail.llm_response, 'prompt_file_path') and batch_detail.llm_response.prompt_file_path:
+                        prompt_file_paths.append(batch_detail.llm_response.prompt_file_path)
+        
+        # 收集整合分析的提示词文件路径
+        if hasattr(llm_response, 'prompt_file_path') and llm_response.prompt_file_path:
+            prompt_file_paths.append(llm_response.prompt_file_path)
+        
+        result.prompt_file_paths = prompt_file_paths
         
         return result
     
@@ -1264,7 +1297,8 @@ class BatchProcessor:
                     command_type="process_single_tagged_batch",
                     llm_command=getattr(response, 'call_command', 'unknown'),
                     llm_provider=self.llm_provider.provider_name,
-                    model_name=getattr(response, 'model', 'unknown')
+                    model_name=getattr(response, 'model', 'unknown'),
+                    llm_response=response  # 传递完整的LLM响应对象
                 )
                 
                 # 检查响应内容质量
@@ -1318,7 +1352,8 @@ class BatchProcessor:
                     command_type="process_single_tagged_batch",
                     llm_command=getattr(response, 'call_command', 'unknown'),
                     llm_provider=self.llm_provider.provider_name,
-                    model_name=getattr(response, 'model', 'unknown')
+                    model_name=getattr(response, 'model', 'unknown'),
+                    llm_response=response  # 传递完整的LLM响应对象
                 )
                 
                 return BatchResult(
@@ -1730,7 +1765,8 @@ class BatchProcessor:
                                 processing_time=0.0,
                                 response_content=response.content,
                                 llm_command=getattr(response, 'call_command', 'command not available'),
-                                command_type="process_messages_with_template"
+                                command_type="process_messages_with_template",
+                                llm_response=response  # 传递完整的LLM响应对象
                             )
                             
                             # 检查响应质量
@@ -1772,6 +1808,21 @@ class BatchProcessor:
                     processing_time = time.time() - start_time
                     
                     if response.success:
+                        # 创建BatchExecutionDetail
+                        batch_detail = BatchExecutionDetail(
+                            batch_number=1,
+                            message_count=len(batch_messages),
+                            tokens_used=getattr(response, 'tokens_used', response.token_count if hasattr(response, 'token_count') else 0),
+                            processing_time=processing_time,
+                            success=True,
+                            response_content=response.content,
+                            command_type="process_messages_with_template",
+                            llm_command=getattr(response, 'call_command', f'{platform} analysis'),
+                            llm_provider=getattr(response, 'provider', 'unknown'),
+                            model_name=getattr(response, 'model', 'unknown'),
+                            llm_response=response  # 关键：传递完整的LLM响应对象
+                        )
+                        
                         return BatchResult(
                             platform=platform,
                             total_messages=len(deduplicated_messages),  # 使用去重后的数量
@@ -1782,7 +1833,8 @@ class BatchProcessor:
                             total_cost=getattr(response, 'cost', 0.0),
                             processing_time=processing_time,
                             summaries=[response.content],
-                            errors=[]
+                            errors=[],
+                            batch_details=[batch_detail]  # 关键：添加批次详情
                         )
                     else:
                         return BatchResult(
@@ -1835,7 +1887,8 @@ class BatchProcessor:
                             success=True,  # 整体成功
                             response_content=integration_response.content if i == len(batches) - 1 else "",  # 只有最后一个批次有完整内容
                             command_type="process_batches_with_integration",
-                            llm_command=getattr(integration_response, 'call_command', 'integration processing')
+                            llm_command=getattr(integration_response, 'call_command', 'integration processing'),
+                            llm_response=integration_response if i == len(batches) - 1 else None  # 只在最后一个批次传递完整LLMResponse
                         )
                         successful_batch_details.append(batch_detail)
                     
@@ -1865,7 +1918,8 @@ class BatchProcessor:
                             response_content="",
                             command_type="process_batches_with_integration",
                             llm_command=getattr(integration_response, 'call_command', 'integration failed'),
-                            error_message=integration_response.error_message
+                            error_message=integration_response.error_message,
+                            llm_response=integration_response if i == len(batches) - 1 else None  # 只在最后一个批次传递完整LLMResponse
                         )
                         failed_batch_details.append(batch_detail)
                     

@@ -272,22 +272,62 @@ class ReportGenerator:
     def _generate_prompt_files_section(self, platforms_included: List[str], batch_result=None) -> str:
         """生成提示词文件路径章节"""
         try:
-            # 从BatchResult中获取实际使用的提示词文件路径
-            prompt_file_path = self._extract_prompt_file_path(batch_result)
+            # 直接从BatchResult获取收集好的提示词文件路径
+            prompt_file_paths = getattr(batch_result, 'prompt_file_paths', [])
             
-            if prompt_file_path:
-                # 生成统一数据位置说明（使用统一analysis_data标签）
+            if prompt_file_paths:
+                # 生成统一数据位置说明
                 platform_names = [self._get_platform_display_name(p) for p in platforms_included]
                 platforms_display = "、".join(platform_names)
                 
                 sections = []
-                sections.append(f"**AI分析使用的提示词文件**: `{prompt_file_path}`")
+                sections.append("**本次分析使用的提示词与数据文件**:")
                 sections.append("")
-                sections.append("**数据位置说明**:")
-                sections.append(f"- **所有平台数据**: 在提示词文件中搜索 `<analysis_data>` 标签，该标签内包含已格式化的{platforms_display}数据")
+                
+                # 按文件名分类显示：平台独立分析 + 整合分析
+                platform_files = []
+                integration_files = []
+                
+                for path in prompt_file_paths:
+                    filename = os.path.basename(path)
+                    if 'integration_analysis' in filename:
+                        integration_files.append(path)
+                    else:
+                        platform_files.append(path)
+                
+                # 显示各平台独立分析的提示词文件
+                if platform_files:
+                    sections.append("**各平台独立分析文件**:")
+                    for i, path in enumerate(platform_files, 1):
+                        filename = os.path.basename(path)
+                        # 从文件名提取平台信息
+                        if 'twitter_analysis' in filename:
+                            platform_name = '🐦 Twitter/X'
+                        elif 'telegram_analysis' in filename:
+                            platform_name = '✈️ Telegram'
+                        elif 'discord_analysis' in filename:
+                            platform_name = '💬 Discord'
+                        elif 'gmail_analysis' in filename:
+                            platform_name = '📧 Gmail'
+                        else:
+                            platform_name = '📄 未知平台'
+                        
+                        sections.append(f"- {platform_name}: `{path}`")
+                    sections.append("")
+                
+                # 显示整合分析的提示词文件
+                if integration_files:
+                    sections.append("**统一整合分析文件**:")
+                    for path in integration_files:
+                        sections.append(f"- 🤖 整合分析: `{path}`")
+                    sections.append("")
+                
+                sections.append("**分析文件内的原始数据解析说明**:")
+                sections.append(f"- **各平台独立数据**: 在各平台分析文件中搜索 `<analysis_data>` 标签，该标签内的内容即为对应平台本次分析使用的原始数据")
+                sections.append(f"- **整合分析数据**: 在整合分析文件中查看各平台分析结果的综合处理")
                 
                 sections.append("")
-                sections.append("💡 **使用说明**: 提示词文件中的数据已经包含行号信息 `[tg:7702 时间]`， 用于分析报告的原始来源数据中的详细情况。")
+                sections.append("💡 ** Telegram 平台原始数据使用说明**: 提示词数据文件中的数据已经包含行号信息 `[tg:7702 时间]`， 可用于定位原始数据的详细情况。")
                 
                 return "\n".join(sections)
             else:
@@ -296,24 +336,6 @@ class ReportGenerator:
         except Exception as e:
             return f"获取提示词文件路径失败: {str(e)}"
     
-    def _extract_prompt_file_path(self, batch_result) -> Optional[str]:
-        """从BatchResult中提取实际使用的提示词文件路径"""
-        try:
-            if not batch_result or not hasattr(batch_result, 'batch_details'):
-                return None
-            
-            # 从batch_details中查找最新的LLM调用记录
-            for batch_detail in reversed(batch_result.batch_details or []):
-                if hasattr(batch_detail, 'llm_responses'):
-                    for response in reversed(batch_detail.llm_responses or []):
-                        # 直接从LLMResponse对象获取提示词文件路径
-                        if hasattr(response, 'prompt_file_path') and response.prompt_file_path:
-                            return response.prompt_file_path
-            
-            return None
-        except Exception as e:
-            self.logger.debug(f"Failed to extract prompt file path: {e}")
-            return None
     
     def _get_platform_display_name(self, platform: str) -> str:
         """Get display name for platform."""
