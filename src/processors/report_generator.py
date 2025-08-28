@@ -60,17 +60,6 @@ class ReportGenerator:
         
         self.logger.info(f"Initialized report generator: {self.output_directory}")
     
-    def _should_include_execution_logs(self) -> bool:
-        """
-        检查配置是否启用了执行日志包含功能
-        
-        Returns:
-            True if execution logs should be included, False otherwise
-        """
-        if self.config_manager is None:
-            return False
-            
-        return self.config_manager.output.get('include_execution_logs', False)
     
     def _generate_filename(self, prefix: str) -> str:
         """
@@ -118,7 +107,8 @@ class ReportGenerator:
                                     platforms_included: List[str],
                                     total_messages: int,
                                     start_time: Optional[datetime] = None,
-                                    hours_back: Optional[int] = None) -> str:
+                                    hours_back: Optional[int] = None,
+                                    data_file_paths: Optional[Dict[str, str]] = None) -> str:
         """
         Generate a unified multi-platform report from unified analysis results.
         
@@ -128,6 +118,7 @@ class ReportGenerator:
             total_messages: Total number of messages analyzed
             start_time: Program start time (overrides instance value if provided)
             hours_back: Hours of data collected (overrides instance value if provided)
+            data_file_paths: Dict mapping platform to absolute data file path
             
         Returns:
             Path to generated unified report file
@@ -234,6 +225,21 @@ class ReportGenerator:
         platform_names = [self._get_platform_display_name(p) for p in platforms_included]
         platforms_display = "、".join(platform_names)
         
+        # Generate data files section
+        if data_file_paths:
+            data_files_lines = []
+            for platform in platforms_included:
+                if platform in data_file_paths:
+                    platform_name = self._get_platform_display_name(platform)
+                    file_path = data_file_paths[platform]
+                    data_files_lines.append(f"- **{platform_name}**: `{file_path}`")
+                else:
+                    platform_name = self._get_platform_display_name(platform)
+                    data_files_lines.append(f"- **{platform_name}**: 数据文件路径未知")
+            data_files_section = "\n".join(data_files_lines)
+        else:
+            data_files_section = "数据文件路径信息不可用"
+        
         content = f"""
 **生成时间**: {report_time}  
 **数据范围**: 最近 {self.hours_back or 'N/A'} 小时  
@@ -248,6 +254,9 @@ class ReportGenerator:
 - **Token 使用**: {batch_result.total_tokens_used:,} (平均 {batch_result.average_tokens_per_batch:.0f}/批次)
 - **处理时间**: {batch_result.processing_time:.1f} 秒
 - **估算成本**: ${batch_result.total_cost:.4f}
+
+### 📂 原始数据文件路径
+{data_files_section}
 
 ## 🤖 统一AI分析结果
 
@@ -264,23 +273,6 @@ class ReportGenerator:
         else:
             content += "暂无 AI 分析结果。\n\n"
         
-        # Add appendix with execution logs (only if enabled in config)
-        if self._should_include_execution_logs():
-            execution_logs = self._extract_task_logs("ANALYZE")
-            content += f"""
-# 附录
-
-## 执行日志
-
-以下是本次分析任务的完整执行日志：
-
-```log
-{execution_logs}
-```
-
----
-
-"""
         
         # Add simple footer
         content += f"""*报告由 TDXAgent 自动生成 - {report_time}*
@@ -338,22 +330,6 @@ class ReportGenerator:
 
 """
         
-        # Add appendix with execution logs (only if enabled in config)
-        if self._should_include_execution_logs():
-            content += f"""# 附录
-
-## 执行日志
-
-错误发生前的完整执行过程：
-
-```log
-{self._extract_task_logs(self.start_time, "ANALYZE")}
-```
-
-*通过执行日志可以帮助诊断问题原因*
-
----
-"""
         
         content += f"*{report_time} - TDXAgent*"
         
@@ -635,126 +611,3 @@ class ReportGenerator:
             ]
         }
     
-    def _extract_task_logs(self, task_type: str = "ANALYZE") -> str:
-        """
-        提取最后一次任务的执行日志
-        
-        Args:
-            task_type: 任务类型 (ANALYZE, COLLECT等)
-            
-        Returns:
-            格式化的日志内容字符串，如果没有日志则返回空字符串
-        """
-        try:
-            # 使用配置管理器获取正确的数据目录
-            if self.config_manager:
-                data_directory = self.config_manager.app.data_directory
-                cron_log_file = Path(data_directory) / "logs" / "cron_analyze.log"
-            else:
-                # 向后兼容：如果没有配置管理器，使用项目根目录
-                import os
-                project_root = Path(os.path.abspath(__file__)).parent.parent.parent
-                cron_log_file = project_root / "TDXAgent_Data" / "logs" / "cron_analyze.log"
-            
-            # 检查日志文件是否存在且有内容
-            if not cron_log_file.exists() or cron_log_file.stat().st_size < 100:
-                return ""  # 返回空字符串，附录中会显示空内容
-            
-            # 读取日志文件
-            with open(cron_log_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            # 使用Shell脚本边界标识提取最后一次分析任务的日志
-            return self._extract_from_cron_log(lines, task_type)
-                
-        except Exception as e:
-            self.logger.error(f"Failed to extract task logs: {e}")
-            return ""  # 出错时也返回空字符串
-    
-    def _extract_from_cron_log(self, lines: List[str], task_type: str) -> str:
-        """
-        从cron日志中提取任务日志（使用Shell脚本边界标识）
-        
-        Args:
-            lines: 日志行列表
-            task_type: 任务类型
-            
-        Returns:
-            清理后的日志字符串，如果没有找到有效日志则返回空字符串
-        """
-        # 查找Shell脚本的开始和结束标识
-        if task_type.upper() == "ANALYZE":
-            start_marker = "开始数据分析"
-            end_marker = "数据分析结束"
-        else:
-            start_marker = f"开始数据{task_type.lower()}"
-            end_marker = f"数据{task_type.lower()}结束"
-        
-        # 直接找到最后一个开始标识和最后一个结束标识
-        last_start_pos = None
-        last_end_pos = None
-        
-        # 从后往前查找最后一个开始标识
-        for i in range(len(lines) - 1, -1, -1):
-            if start_marker in lines[i] and "===" in lines[i]:
-                last_start_pos = i
-                break
-        
-        # 从后往前查找最后一个结束标识
-        for i in range(len(lines) - 1, -1, -1):
-            if end_marker in lines[i] and "===" in lines[i]:
-                last_end_pos = i
-                break
-        
-        # 必须同时找到开始和结束标识
-        if last_start_pos is None or last_end_pos is None:
-            return ""  # 没找到开始或结束标识
-        
-        # 如果最后一个开始标识没有对应的结束标识（任务还在运行），
-        # 则查找倒数第二个完成的任务
-        if last_end_pos <= last_start_pos:
-            # 查找倒数第二个开始标识
-            second_last_start = None
-            start_count = 0
-            for i in range(len(lines) - 1, -1, -1):
-                if start_marker in lines[i] and "===" in lines[i]:
-                    start_count += 1
-                    if start_count == 2:  # 倒数第二个
-                        second_last_start = i
-                        break
-            
-            if second_last_start is not None and last_end_pos > second_last_start:
-                # 使用倒数第二个完成的任务
-                last_start_pos = second_last_start
-            else:
-                return ""  # 没找到有效的完成任务
-        
-        # 提取最后一次完整执行的日志
-        task_logs = lines[last_start_pos:last_end_pos + 1]
-        
-        return self._clean_log_lines(task_logs)
-    
-    def _clean_log_lines(self, lines: List[str]) -> str:
-        """
-        清理日志行，移除敏感信息
-        
-        Args:
-            lines: 日志行列表
-            
-        Returns:
-            清理后的日志字符串，如果没有日志行则返回空字符串
-        """
-        if not lines:
-            return ""
-            
-        cleaned_lines = []
-        for line in lines:
-            cleaned = line.strip()
-            # 更精确的敏感信息脱敏（只针对真正的敏感信息）
-            sensitive_patterns = ['api_key=', 'token=', 'password=', 'secret=', 'Bearer ', 'Authorization:']
-            if any(pattern in cleaned for pattern in sensitive_patterns):
-                # 保留行的结构，但隐藏敏感内容
-                cleaned = cleaned[:50] + "***[敏感信息已隐藏]" if len(cleaned) > 50 else cleaned + "***"
-            cleaned_lines.append(cleaned)
-        
-        return '\n'.join(cleaned_lines)

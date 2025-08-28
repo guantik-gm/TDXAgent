@@ -342,7 +342,9 @@ class JSONLStorage:
                 try:
                     async with self._file_lock_context(file_path):
                         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                            line_number = 0
                             async for line in f:
+                                line_number += 1
                                 if limit and count >= limit:
                                     break
                                 
@@ -350,10 +352,16 @@ class JSONLStorage:
                                 if line:
                                     try:
                                         message = json.loads(line)
+                                        # 🎯 新增：记录文件位置信息用于引用追踪
+                                        message['_file_reference'] = {
+                                            'filename': file_path.name,  # 如 "2025-08-28.jsonl"
+                                            'line_number': line_number,
+                                            'file_path': str(file_path.relative_to(self.data_directory))
+                                        }
                                         yield message
                                         count += 1
                                     except json.JSONDecodeError as e:
-                                        self.logger.warning(f"Failed to parse line in {file_path}: {e}")
+                                        self.logger.warning(f"Failed to parse line {line_number} in {file_path}: {e}")
                 
                 except Exception as e:
                     self.logger.error(f"Failed to read from {file_path}: {e}")

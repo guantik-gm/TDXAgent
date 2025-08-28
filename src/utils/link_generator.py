@@ -87,7 +87,7 @@ class LinkGenerator:
             return self._generate_fallback_reference(message)
     
     def _generate_telegram_reference(self, message: Dict[str, Any]) -> str:
-        """Generate Telegram message reference with text description (per prompt template requirement)."""
+        """Generate Telegram message reference with text description and file location."""
         try:
             author_name = message.get('author', {}).get('name', 'Unknown')
             context = message.get('context', {})
@@ -96,12 +96,21 @@ class LinkGenerator:
             # 根据提示词模板要求，Telegram使用文本描述格式，不使用链接
             timestamp = self._format_timestamp(message.get('metadata', {}).get('posted_at', ''))
             
+            # 🎯 新增：提取文件位置信息，移到前面体现重要性
+            file_ref = message.get('_file_reference', {})
+            file_location = ""
+            if file_ref:
+                line_number = file_ref.get('line_number')
+                platform = message.get('platform', 'unknown')
+                if line_number and platform:
+                    file_location = f"[{platform}:{line_number}] "
+            
             if channel_name:
                 # 清理群组名称
                 clean_channel = channel_name.split('(')[0].strip() if '(' in channel_name else channel_name
-                return f"{clean_channel} @{author_name} {timestamp}"
+                return f"{file_location}{clean_channel} @{author_name} {timestamp}"
             else:
-                return f"@{author_name} {timestamp}的Telegram消息"
+                return f"{file_location}@{author_name} {timestamp}的Telegram消息"
                 
         except Exception:
             return self._generate_fallback_reference(message)
@@ -217,7 +226,8 @@ class LinkGenerator:
             # 群组标题
             section_lines = [f"## {channel} 群组讨论"]
             
-            # 按时间排序
+            # 🎯 按时间排序（解决时间递增但行号递减问题）
+            # 先按时间排序，这样显示时时间是正确的递增顺序
             channel_messages.sort(key=lambda m: m.get('metadata', {}).get('posted_at', ''))
             
             for i, message in enumerate(channel_messages, 1):
@@ -228,6 +238,15 @@ class LinkGenerator:
                 # 验证引用完整性
                 if not self._validate_telegram_reference_completeness(message, channel, author, timestamp):
                     print(f"WARNING: Telegram引用信息不完整 - {message.get('id', 'unknown')}")
+                
+                # 🎯 新增：提取文件位置信息，移到前面体现重要性
+                file_ref = message.get('_file_reference', {})
+                file_location = ""
+                if file_ref:
+                    line_number = file_ref.get('line_number')
+                    platform = message.get('platform', 'unknown')
+                    if line_number and platform:
+                        file_location = f"[{platform}:{line_number}] "
                 
                 # 添加媒体指示符
                 media_indicators = []
@@ -240,8 +259,8 @@ class LinkGenerator:
                 
                 media_str = " " + "".join(media_indicators) if media_indicators else ""
                 
-                # 格式：消息内容（不添加注释块）
-                line = f"{i}. [{timestamp}] @{author}: {content}{media_str}"
+                # 格式：行号信息 + 时间 + 内容（行号在前体现重要性）
+                line = f"{i}. {file_location}[{timestamp}] @{author}: {content}{media_str}"
                 section_lines.append(line)
             
             formatted_sections.append('\n'.join(section_lines))

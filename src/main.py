@@ -279,6 +279,7 @@ class TDXAgent:
         
         # 🎯 统一多平台分析 - 收集所有平台数据后统一分析
         all_platform_data = {}
+        data_file_paths = {}  # 记录各平台使用的数据文件绝对路径
         total_messages = 0
         
         with Progress(
@@ -309,6 +310,13 @@ class TDXAgent:
                     if messages:
                         all_platform_data[platform] = messages
                         total_messages += len(messages)
+                        
+                        # 获取实际使用的数据文件路径
+                        # 由于可能跨多个日期，我们选择最新的文件路径作为代表
+                        latest_date = end_time.date()
+                        data_file_path = self.storage._get_file_path(platform, latest_date)
+                        data_file_paths[platform] = str(data_file_path.absolute())
+                        
                         self.logger.info(f"收集到 {len(messages)} 条 {platform} 消息")
                     else:
                         self.logger.info(f"No messages found for {platform}")
@@ -358,6 +366,11 @@ class TDXAgent:
                     'platform_message_counts': {
                         platform: len(messages) 
                         for platform, messages in all_platform_data.items()
+                        if platform in successful_platforms
+                    },
+                    'data_file_paths': {
+                        platform: path 
+                        for platform, path in data_file_paths.items()
                         if platform in successful_platforms
                     }
                 }
@@ -469,7 +482,8 @@ class TDXAgent:
                 platforms_included=platforms_included,
                 total_messages=total_messages,
                 start_time=self.execution_start_time,
-                hours_back=hours_back
+                hours_back=hours_back,
+                data_file_paths=analysis_results.get('data_file_paths', {})
             )
             
             if unified_path:
