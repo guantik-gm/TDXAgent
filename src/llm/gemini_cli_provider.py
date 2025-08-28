@@ -231,7 +231,8 @@ class GeminiCliProvider(BaseLLMProvider):
                     error_message=f"CLI execution failed: {full_error}",
                     cost=0.0,
                     call_command=cmd_str,
-                    base_url=None
+                    base_url=None,
+                    prompt_file_path=prompt_file  # 提示词文件路径
                 )
             
             # Parse output
@@ -263,7 +264,8 @@ class GeminiCliProvider(BaseLLMProvider):
                     error_message="Empty response from Gemini CLI",
                     cost=0.0,
                     call_command=cmd_str,
-                    base_url=None
+                    base_url=None,
+                    prompt_file_path=prompt_file  # 提示词文件路径
                 )
             
             # Estimate tokens (rough calculation)
@@ -294,7 +296,8 @@ class GeminiCliProvider(BaseLLMProvider):
                 error_message=None,
                 cost=estimated_cost,
                 call_command=cmd_str,
-                base_url=None  # Gemini CLI doesn't use base URL
+                base_url=None,  # Gemini CLI doesn't use base URL
+                prompt_file_path=prompt_file  # 直接传递提示词文件路径
             )
             
             # Record conversation if enabled
@@ -321,7 +324,8 @@ class GeminiCliProvider(BaseLLMProvider):
                 error_message=f"Generation error: {str(e)}",
                 cost=0.0,
                 call_command=getattr(locals(), 'cmd_str', 'command not available'),
-                base_url=None
+                base_url=None,
+                prompt_file_path=getattr(locals(), 'prompt_file', None)  # 提示词文件路径（如果可用）
             )
     
     

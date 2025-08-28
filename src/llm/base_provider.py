@@ -31,6 +31,7 @@ class LLMResponse:
     # 新增字段：具体的调用命令信息
     call_command: Optional[str] = None  # 具体的调用命令，如 "gemini -y < xxx_prompt.txt" 或 "API调用: OpenAI GPT-4"
     base_url: Optional[str] = None      # API调用的base_url
+    prompt_file_path: Optional[str] = None  # 提示词文件的绝对路径
     
     @property
     def token_count(self) -> int:
@@ -255,6 +256,7 @@ class BaseLLMProvider(ABC):
             LLM response
         """
         # Save prompt to file if enabled
+        current_prompt_file_path = None
         if self._prompt_file_enabled and self._prompt_file_manager:
             try:
                 # Construct full prompt for saving
@@ -269,14 +271,17 @@ class BaseLLMProvider(ABC):
                     analysis_type += f"_{platform}"
                 analysis_type += "_analysis"
                 
-                prompt_file_path = self._prompt_file_manager.save_prompt(
+                current_prompt_file_path = self._prompt_file_manager.save_prompt(
                     full_prompt, 
                     analysis_type=analysis_type
                 )
-                self.logger.debug(f"Saved prompt to: {prompt_file_path}")
+                self.logger.debug(f"Saved prompt to: {current_prompt_file_path}")
                 
             except Exception as e:
                 self.logger.warning(f"Failed to save prompt file: {e}")
+        
+        # Store prompt file path temporarily for this request
+        self._current_prompt_file_path = current_prompt_file_path
         
         # Prepare messages
         messages = []
@@ -390,6 +395,11 @@ class BaseLLMProvider(ABC):
                 start_time = time.time()
                 response = await self._make_request(request)
                 processing_time = time.time() - start_time
+                
+                # Set prompt file path if not already set and available
+                if response.success and hasattr(self, '_current_prompt_file_path') and self._current_prompt_file_path:
+                    if not response.prompt_file_path:  # Only set if not already set by provider
+                        response.prompt_file_path = self._current_prompt_file_path
                 
                 # Track usage
                 current_time = time.time()

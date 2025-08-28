@@ -226,20 +226,8 @@ class ReportGenerator:
         platform_names = [self._get_platform_display_name(p) for p in platforms_included]
         platforms_display = "、".join(platform_names)
         
-        # Generate data files section
-        if data_file_paths:
-            data_files_lines = []
-            for platform in platforms_included:
-                if platform in data_file_paths:
-                    platform_name = self._get_platform_display_name(platform)
-                    file_path = data_file_paths[platform]
-                    data_files_lines.append(f"- **{platform_name}**: `{file_path}`")
-                else:
-                    platform_name = self._get_platform_display_name(platform)
-                    data_files_lines.append(f"- **{platform_name}**: 数据文件路径未知")
-            data_files_section = "\n".join(data_files_lines)
-        else:
-            data_files_section = "数据文件路径信息不可用"
+        # Generate prompt files section - 获取提示词文件路径
+        prompt_files_section = self._generate_prompt_files_section(platforms_included, batch_result)
         
         content = f"""
 **生成时间**: {report_time}  
@@ -256,8 +244,8 @@ class ReportGenerator:
 - **处理时间**: {batch_result.processing_time:.1f} 秒
 - **估算成本**: ${batch_result.total_cost:.4f}
 
-### 📂 原始数据文件路径
-{data_files_section}
+### 📄 提示词文件路径
+{prompt_files_section}
 
 ## 🤖 统一AI分析结果
 
@@ -280,6 +268,52 @@ class ReportGenerator:
 """
         
         return content
+    
+    def _generate_prompt_files_section(self, platforms_included: List[str], batch_result=None) -> str:
+        """生成提示词文件路径章节"""
+        try:
+            # 从BatchResult中获取实际使用的提示词文件路径
+            prompt_file_path = self._extract_prompt_file_path(batch_result)
+            
+            if prompt_file_path:
+                # 生成统一数据位置说明（使用统一analysis_data标签）
+                platform_names = [self._get_platform_display_name(p) for p in platforms_included]
+                platforms_display = "、".join(platform_names)
+                
+                sections = []
+                sections.append(f"**AI分析使用的提示词文件**: `{prompt_file_path}`")
+                sections.append("")
+                sections.append("**数据位置说明**:")
+                sections.append(f"- **所有平台数据**: 在提示词文件中搜索 `<analysis_data>` 标签，该标签内包含已格式化的{platforms_display}数据")
+                
+                sections.append("")
+                sections.append("💡 **使用说明**: 提示词文件中的数据已经包含行号信息 `[tg:7702 时间]`， 用于分析报告的原始来源数据中的详细情况。")
+                
+                return "\n".join(sections)
+            else:
+                return "无法获取提示词文件路径信息"
+                
+        except Exception as e:
+            return f"获取提示词文件路径失败: {str(e)}"
+    
+    def _extract_prompt_file_path(self, batch_result) -> Optional[str]:
+        """从BatchResult中提取实际使用的提示词文件路径"""
+        try:
+            if not batch_result or not hasattr(batch_result, 'batch_details'):
+                return None
+            
+            # 从batch_details中查找最新的LLM调用记录
+            for batch_detail in reversed(batch_result.batch_details or []):
+                if hasattr(batch_detail, 'llm_responses'):
+                    for response in reversed(batch_detail.llm_responses or []):
+                        # 直接从LLMResponse对象获取提示词文件路径
+                        if hasattr(response, 'prompt_file_path') and response.prompt_file_path:
+                            return response.prompt_file_path
+            
+            return None
+        except Exception as e:
+            self.logger.debug(f"Failed to extract prompt file path: {e}")
+            return None
     
     def _get_platform_display_name(self, platform: str) -> str:
         """Get display name for platform."""
