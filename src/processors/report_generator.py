@@ -133,7 +133,7 @@ class ReportGenerator:
             await ensure_directory_async(self.output_directory)
             
             # Generate unified report content
-            report_content = self._generate_unified_content(batch_result, platforms_included, total_messages)
+            report_content = self._generate_unified_content(batch_result, platforms_included, total_messages, data_file_paths)
             
             # Create filename with unified format
             filename = self._generate_filename("TDXAgent分析报告")
@@ -216,7 +216,8 @@ class ReportGenerator:
     def _generate_unified_content(self, 
                                  batch_result: BatchResult,
                                  platforms_included: List[str],
-                                 total_messages: int) -> str:
+                                 total_messages: int,
+                                 data_file_paths: Optional[Dict[str, str]] = None) -> str:
         """Generate unified multi-platform report content."""
         
         report_time = format_timestamp(format_type="human")
