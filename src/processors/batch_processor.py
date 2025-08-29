@@ -390,9 +390,9 @@ class BatchProcessor:
     async def _process_batches_simple(self, batches: List[List[Dict[str, Any]]], 
                                      prompt_template: str,
                                      platform: str = "",
-                                     progress_callback: Optional[Callable[[int, int], None]] = None) -> LLMResponse:
+                                     progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[LLMResponse, List[LLMResponse]]:
         """
-        简化的批次处理方法 - 不使用IntegrationManager
+        简化的批次处理方法 - 不使用IntegrationManager，同时保留所有批次响应信息
         
         Args:
             batches: 消息批次列表
@@ -401,24 +401,27 @@ class BatchProcessor:
             progress_callback: 进度回调
             
         Returns:
-            最后一个批次的LLM响应
+            (最后一个批次的LLM响应, 所有批次的LLM响应列表)
         """
+        empty_response = LLMResponse(
+            content="",
+            usage={},
+            model=self.llm_provider.default_model,
+            provider=self.llm_provider.provider_name,
+            timestamp=datetime.now(),
+            success=False,
+            error_message="No batches to process"
+        )
+        
         if not batches:
-            return LLMResponse(
-                content="",
-                usage={},
-                model=self.llm_provider.default_model,
-                provider=self.llm_provider.provider_name,
-                timestamp=datetime.now(),
-                success=False,
-                error_message="No batches to process"
-            )
+            return empty_response, []
         
         self.logger.info(f"Starting simple batch processing of {len(batches)} batches")
         
         current_analysis = ""
         total_tokens_used = 0
         accumulated_usage = {}
+        all_batch_responses = []  # 保存所有批次的响应
         
         # Process each batch
         for batch_index, batch in enumerate(batches):
@@ -430,9 +433,14 @@ class BatchProcessor:
                 # Import here to avoid circular dependency
                 from utils.link_generator import LinkGenerator
                 
-                # Format messages using unified method
+                # Format messages using unified method with batch info
                 link_generator = LinkGenerator()
-                formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True)
+                batch_info = {
+                    'batch_number': batch_index + 1,
+                    'total_batches': len(batches),
+                    'platform': platform
+                }
+                formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True, batch_info=batch_info)
                 
                 # Create prompt with integration context if not first batch
                 prompt = prompt_template.format(
@@ -443,9 +451,12 @@ class BatchProcessor:
                 # Process batch
                 response = await self.llm_provider.generate_response(prompt, platform=platform)
                 
+                # 保存所有批次响应，无论成功与否
+                all_batch_responses.append(response)
+                
                 if not response.success:
                     self.logger.error(f"Batch {batch_index + 1} failed: {response.error_message}")
-                    return response
+                    return response, all_batch_responses
                 
                 # Update current analysis
                 current_analysis = response.content
@@ -463,7 +474,7 @@ class BatchProcessor:
                 
             except Exception as e:
                 self.logger.error(f"Error processing batch {batch_index + 1}: {e}")
-                return LLMResponse(
+                error_response = LLMResponse(
                     content="",
                     usage=accumulated_usage,
                     model=self.llm_provider.default_model,
@@ -472,9 +483,11 @@ class BatchProcessor:
                     success=False,
                     error_message=f"Simple batch processing failed: {str(e)}"
                 )
+                all_batch_responses.append(error_response)
+                return error_response, all_batch_responses
         
-        # Return final result
-        return LLMResponse(
+        # Return final result with all batch responses
+        final_response = LLMResponse(
             content=current_analysis or "",
             usage=accumulated_usage,
             model=self.llm_provider.default_model,
@@ -483,6 +496,7 @@ class BatchProcessor:
             success=True,
             error_message=None
         )
+        return final_response, all_batch_responses
 
     async def _process_batches_concurrent(self, batches: List[List[Dict[str, Any]]], 
                                         prompt_template: str,
@@ -1867,7 +1881,7 @@ class BatchProcessor:
                     )
             else:
                 # Multiple batches - use simplified processing
-                integration_response = await self._process_batches_simple(
+                integration_response, all_batch_responses = await self._process_batches_simple(
                     batches, template_string, platform, progress_callback
                 )
                 
@@ -1875,20 +1889,19 @@ class BatchProcessor:
                 processing_time = time.time() - start_time
                 
                 if integration_response.success:
-                    # 创建成功的批次详情 - 这样报告生成器能检测到被跳过的无效批次
-                    # 注意：这是简化的实现，实际的批次处理详情在_process_batches_with_integration中
+                    # 创建成功的批次详情 - 使用实际的批次响应而不是平均分配
                     successful_batch_details = []
-                    for i, batch in enumerate(batches):
+                    for i, (batch, batch_response) in enumerate(zip(batches, all_batch_responses)):
                         batch_detail = BatchExecutionDetail(
                             batch_number=i + 1,
                             message_count=len(batch),
-                            tokens_used=getattr(integration_response, 'tokens_used', 0) // len(batches),  # 平均分配
-                            processing_time=processing_time / len(batches),  # 平均分配时间
-                            success=True,  # 整体成功
-                            response_content=integration_response.content if i == len(batches) - 1 else "",  # 只有最后一个批次有完整内容
-                            command_type="process_batches_with_integration",
-                            llm_command=getattr(integration_response, 'call_command', 'integration processing'),
-                            llm_response=integration_response if i == len(batches) - 1 else None  # 只在最后一个批次传递完整LLMResponse
+                            tokens_used=batch_response.usage.get('total_tokens', 0) if batch_response.usage else 0,
+                            processing_time=processing_time / len(batches),  # 平均分配时间（保持原逻辑）
+                            success=batch_response.success,
+                            response_content=batch_response.content,
+                            command_type="process_batches_simple",
+                            llm_command=getattr(batch_response, 'call_command', 'batch processing'),
+                            llm_response=batch_response  # 🎯 关键修复：每个批次都保存其完整的LLMResponse
                         )
                         successful_batch_details.append(batch_detail)
                     

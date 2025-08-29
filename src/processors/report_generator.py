@@ -281,11 +281,11 @@ class ReportGenerator:
                 platforms_display = "、".join(platform_names)
                 
                 sections = []
-                sections.append("**本次分析使用的提示词与数据文件**:")
+                sections.append("**本次分析使用的提示词数据文件**:")
                 sections.append("")
                 
-                # 按文件名分类显示：平台独立分析 + 整合分析
-                platform_files = []
+                # 按平台分组和文件名分类显示：平台独立分析 + 整合分析
+                platform_files_grouped = {}  # {platform: [paths]}
                 integration_files = []
                 
                 for path in prompt_file_paths:
@@ -293,26 +293,46 @@ class ReportGenerator:
                     if 'integration_analysis' in filename:
                         integration_files.append(path)
                     else:
-                        platform_files.append(path)
-                
-                # 显示各平台独立分析的提示词文件
-                if platform_files:
-                    sections.append("**各平台独立分析文件**:")
-                    for i, path in enumerate(platform_files, 1):
-                        filename = os.path.basename(path)
                         # 从文件名提取平台信息
                         if 'twitter_analysis' in filename:
+                            platform = 'twitter'
                             platform_name = '🐦 Twitter/X'
                         elif 'telegram_analysis' in filename:
+                            platform = 'telegram'
                             platform_name = '✈️ Telegram'
                         elif 'discord_analysis' in filename:
+                            platform = 'discord'
                             platform_name = '💬 Discord'
                         elif 'gmail_analysis' in filename:
+                            platform = 'gmail'
                             platform_name = '📧 Gmail'
                         else:
+                            platform = 'unknown'
                             platform_name = '📄 未知平台'
                         
-                        sections.append(f"- {platform_name}: `{path}`")
+                        if platform not in platform_files_grouped:
+                            platform_files_grouped[platform] = {'name': platform_name, 'paths': []}
+                        platform_files_grouped[platform]['paths'].append(path)
+                
+                # 对每个平台的文件按路径名排序（确保批次顺序正确）
+                for platform_data in platform_files_grouped.values():
+                    platform_data['paths'].sort()
+                
+                # 显示各平台独立分析的提示词文件（按平台分组）
+                if platform_files_grouped:
+                    sections.append("**各平台独立分析文件**:")
+                    for platform, data in platform_files_grouped.items():
+                        platform_name = data['name']
+                        paths = data['paths']
+                        
+                        if len(paths) == 1:
+                            # 单批次：直接显示
+                            sections.append(f"- {platform_name}: `{paths[0]}`")
+                        else:
+                            # 多批次：分批次显示
+                            sections.append(f"- {platform_name}:")
+                            for i, path in enumerate(paths, 1):
+                                sections.append(f"  - 批次{i}: `{path}`")
                     sections.append("")
                 
                 # 显示整合分析的提示词文件
@@ -322,12 +342,14 @@ class ReportGenerator:
                         sections.append(f"- 🤖 整合分析: `{path}`")
                     sections.append("")
                 
-                sections.append("**分析文件内的原始数据解析说明**:")
-                sections.append(f"- **各平台独立数据**: 在各平台分析文件中搜索 `<analysis_data>` 标签，该标签内的内容即为对应平台本次分析使用的原始数据")
-                sections.append(f"- **整合分析数据**: 在整合分析文件中查看各平台分析结果的综合处理")
+                sections.append("### 报告中的原始数据引用解析指引")
+                sections.append("以上提示词数据文件中包含用于分析的原始数据，可以结合分析报告中的引用信息，对应到具体提示词数据文件中的行范围，直接读取或者通过命令行工具进行查看、过滤与分析等操作。")
+                sections.append("**提示词数据文件内的原始数据解析说明**:")
+                sections.append(f"- **各平台独立数据**: 在各平台数据文件中搜索 `<analysis_data>` 标签，该标签内的内容即为对应平台本次分析使用的原始数据")
+                sections.append(f"- **多批次处理**: 如果某平台有多个批次的提示词数据文件，每个批次使用的提示词数据文件都包含该批次处理的消息数据")
                 
                 sections.append("")
-                sections.append("💡 ** Telegram 平台原始数据使用说明**: 提示词数据文件中的数据已经包含行号信息 `[tg:7702 时间]`， 可用于定位原始数据的详细情况。")
+                sections.append("💡 **数据定位说明**: 提示词文件中的数据已经包含行号信息（如 `[tg:7702 时间]`），可用于定位原始JSONL文件中的具体数据位置。 在多批次场景中将会出现`[tg1:7702-8000 时间]`形式的引用，代表 telegram 第 1 批次的分析，可以到对应批次使用的提示词数据文件中获取到对应的原始数据。")
                 
                 return "\n".join(sections)
             else:
