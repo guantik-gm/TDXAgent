@@ -96,29 +96,12 @@ class LinkGenerator:
             # 根据提示词模板要求，Telegram使用文本描述格式，不使用链接
             timestamp = self._format_timestamp(message.get('metadata', {}).get('posted_at', ''))
             
-            # 🎯 优化引用格式：使用平台缩写，简洁明了
-            file_ref = message.get('_file_reference', {})
-            platform_abbr = {
-                'telegram': 'tg',
-                'twitter': 'tw', 
-                'gmail': 'gm',
-                'discord': 'dc'
-            }
-            
-            reference_info = ""
-            if file_ref:
-                line_number = file_ref.get('line_number')
-                platform = message.get('platform', 'unknown')
-                if line_number and platform:
-                    abbr = platform_abbr.get(platform, platform[:2])
-                    reference_info = f"[{abbr}:{line_number}] "
-            
             if channel_name:
                 # 清理群组名称
                 clean_channel = channel_name.split('(')[0].strip() if '(' in channel_name else channel_name
-                return f"{reference_info}{clean_channel} @{author_name} {timestamp}"
+                return f"{clean_channel} @{author_name} {timestamp}"
             else:
-                return f"{reference_info}@{author_name} {timestamp}的Telegram消息"
+                return f"@{author_name} {timestamp}的Telegram消息"
                 
         except Exception:
             return self._generate_fallback_reference(message)
@@ -198,13 +181,12 @@ class LinkGenerator:
             # 如果解析失败，返回原始字符串的前部分
             return timestamp_str[:16] if len(timestamp_str) > 16 else timestamp_str
     
-    def format_telegram_messages_grouped(self, messages: list, batch_info: dict = None) -> str:
+    def format_telegram_messages_grouped(self, messages: list) -> str:
         """
         Format Telegram messages grouped by channel for efficient analysis.
         
         Args:
             messages: List of Telegram message dictionaries
-            batch_info: Batch information for multi-batch scenarios
             
         Returns:
             Formatted string with messages grouped by channel with platform header
@@ -230,8 +212,6 @@ class LinkGenerator:
             groups[channel].append(message)
         
         formatted_sections = []
-        # 🎯 关键修复：使用全局消息序号，确保同一批次文件中序号唯一
-        global_message_counter = 1  # 全局消息计数器，在同一批次文件中唯一
         
         for channel, channel_messages in groups.items():
             # 群组标题
@@ -261,37 +241,12 @@ class LinkGenerator:
                 
                 media_str = " " + "".join(media_indicators) if media_indicators else ""
                 
-                # 🎯 关键修复：使用全局消息序号，确保同一批次文件中序号唯一
-                # 例如：用户看到[tg1:5]，可以在提示词文件中搜索"[tg1:5"直接定位
-                message_sequence_number = global_message_counter
+                # 🎯 简化格式：直接使用时间戳，无需行号信息
+                # 用户可以通过群组名+用户名+时间在提示词文件中定位
                 
-                platform_abbr = {
-                    'telegram': 'tg',
-                    'twitter': 'tw', 
-                    'gmail': 'gm',
-                    'discord': 'dc'
-                }
-                
-                # 生成提示词文件内行号引用格式（支持批次编号）
-                platform = message.get('platform', 'unknown')
-                abbr = platform_abbr.get(platform, platform[:2])
-                
-                # 批次编号逻辑：多批次用tg1、tg2，单批次用tg
-                if batch_info and batch_info.get('total_batches', 1) > 1:
-                    batch_num = batch_info.get('batch_number', 1)
-                    batch_abbr = f"{abbr}{batch_num}"
-                else:
-                    batch_abbr = abbr
-                
-                # 格式：[平台缩写+批次:消息序号 时间] - 对应提示词文件中的消息顺序
-                line_info = f"[{batch_abbr}:{message_sequence_number} {timestamp}]"
-                
-                # 格式：[平台:序号 时间] @用户: 内容  
-                line = f"{i}. {line_info} @{author}: {content}{media_str}"
+                # 格式：序号. [时间] @用户: 内容
+                line = f"{i}. [{timestamp}] @{author}: {content}{media_str}"
                 section_lines.append(line)
-                
-                # 递增全局消息计数器
-                global_message_counter += 1
             
             formatted_sections.append('\n'.join(section_lines))
         
@@ -533,7 +488,7 @@ class LinkGenerator:
     
     # ========== 新增统一格式化方法 ==========
     
-    def format_messages_unified(self, messages: list, enable_twitter_layering: bool = True, batch_info: dict = None) -> str:
+    def format_messages_unified(self, messages: list, enable_twitter_layering: bool = True) -> str:
         """
         统一格式化所有平台消息 - AI完全平台无关。
         自动按平台分组处理，应用各平台最优化的格式。
@@ -541,7 +496,6 @@ class LinkGenerator:
         Args:
             messages: List of message dictionaries from any platform
             enable_twitter_layering: Whether to enable Twitter timeline source layering
-            batch_info: Batch information dict with keys like {'batch_number': 1, 'total_batches': 2, 'platform': 'telegram'}
             
         Returns:
             Formatted string with unified citation format
@@ -562,8 +516,8 @@ class LinkGenerator:
         
         for platform, platform_messages in platform_groups.items():
             if platform == 'telegram':
-                # 使用Telegram群组优化格式，传递批次信息
-                formatted_section = self.format_telegram_messages_grouped(platform_messages, batch_info)
+                # 使用Telegram群组优化格式
+                formatted_section = self.format_telegram_messages_grouped(platform_messages)
             elif platform == 'twitter':
                 # 使用Twitter分层或普通格式
                 if enable_twitter_layering:

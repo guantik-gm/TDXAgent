@@ -433,14 +433,9 @@ class BatchProcessor:
                 # Import here to avoid circular dependency
                 from utils.link_generator import LinkGenerator
                 
-                # Format messages using unified method with batch info
+                # Format messages using unified method
                 link_generator = LinkGenerator()
-                batch_info = {
-                    'batch_number': batch_index + 1,
-                    'total_batches': len(batches),
-                    'platform': platform
-                }
-                formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True, batch_info=batch_info)
+                formatted_messages = link_generator.format_messages_unified(batch, enable_twitter_layering=True)
                 
                 # Create prompt with integration context if not first batch
                 prompt = prompt_template.format(
