@@ -230,6 +230,8 @@ class LinkGenerator:
             groups[channel].append(message)
         
         formatted_sections = []
+        # 🎯 关键修复：使用全局消息序号，确保同一批次文件中序号唯一
+        global_message_counter = 1  # 全局消息计数器，在同一批次文件中唯一
         
         for channel, channel_messages in groups.items():
             # 群组标题
@@ -248,15 +250,6 @@ class LinkGenerator:
                 if not self._validate_telegram_reference_completeness(message, channel, author, timestamp):
                     print(f"WARNING: Telegram引用信息不完整 - {message.get('id', 'unknown')}")
                 
-                # 🎯 优化格式：单bracket，行号优先，平台缩写，Token效率提升32%
-                file_ref = message.get('_file_reference', {})
-                platform_abbr = {
-                    'telegram': 'tg',
-                    'twitter': 'tw', 
-                    'gmail': 'gm',
-                    'discord': 'dc'
-                }
-                
                 # 添加媒体指示符
                 media_indicators = []
                 if message.get('content', {}).get('media'):
@@ -268,30 +261,37 @@ class LinkGenerator:
                 
                 media_str = " " + "".join(media_indicators) if media_indicators else ""
                 
-                # 生成优化的引用格式（支持批次编号）
-                if file_ref:
-                    line_number = file_ref.get('line_number')
-                    platform = message.get('platform', 'unknown')
-                    if line_number and platform:
-                        abbr = platform_abbr.get(platform, platform[:2])
-                        
-                        # 批次编号逻辑：多批次用tg1、tg2，单批次用tg
-                        if batch_info and batch_info.get('total_batches', 1) > 1:
-                            batch_num = batch_info.get('batch_number', 1)
-                            batch_abbr = f"{abbr}{batch_num}"
-                        else:
-                            batch_abbr = abbr
-                        
-                        # 格式：[平台缩写+批次:行号 时间] - 行号优先，一个bracket包含所有信息
-                        line_info = f"[{batch_abbr}:{line_number} {timestamp}]"
-                    else:
-                        line_info = f"[{timestamp}]"
-                else:
-                    line_info = f"[{timestamp}]"
+                # 🎯 关键修复：使用全局消息序号，确保同一批次文件中序号唯一
+                # 例如：用户看到[tg1:5]，可以在提示词文件中搜索"[tg1:5"直接定位
+                message_sequence_number = global_message_counter
                 
-                # 格式：[平台:行号 时间] @用户: 内容
+                platform_abbr = {
+                    'telegram': 'tg',
+                    'twitter': 'tw', 
+                    'gmail': 'gm',
+                    'discord': 'dc'
+                }
+                
+                # 生成提示词文件内行号引用格式（支持批次编号）
+                platform = message.get('platform', 'unknown')
+                abbr = platform_abbr.get(platform, platform[:2])
+                
+                # 批次编号逻辑：多批次用tg1、tg2，单批次用tg
+                if batch_info and batch_info.get('total_batches', 1) > 1:
+                    batch_num = batch_info.get('batch_number', 1)
+                    batch_abbr = f"{abbr}{batch_num}"
+                else:
+                    batch_abbr = abbr
+                
+                # 格式：[平台缩写+批次:消息序号 时间] - 对应提示词文件中的消息顺序
+                line_info = f"[{batch_abbr}:{message_sequence_number} {timestamp}]"
+                
+                # 格式：[平台:序号 时间] @用户: 内容  
                 line = f"{i}. {line_info} @{author}: {content}{media_str}"
                 section_lines.append(line)
+                
+                # 递增全局消息计数器
+                global_message_counter += 1
             
             formatted_sections.append('\n'.join(section_lines))
         
