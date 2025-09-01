@@ -267,15 +267,12 @@ class TDXAgent:
         hours_back = hours_back or self.config_manager.app.default_hours_to_fetch
         platforms = platforms or list(self.scrapers.keys())
         
-        # Calculate time range for analysis
-        from datetime import datetime, timedelta, timezone
-        end_time = datetime.now(timezone.utc)
+        # Calculate time range for analysis (使用本地时区)
+        from datetime import datetime, timedelta
+        end_time = datetime.now()  # 本地时区时间
         start_time = end_time - timedelta(hours=hours_back)
         
-        # 转换为本地时间显示
-        local_start_time = start_time.astimezone()
-        local_end_time = end_time.astimezone()
-        self.logger.info(f"分析时间范围: {local_start_time.strftime('%Y-%m-%d %H:%M')} 到 {local_end_time.strftime('%Y-%m-%d %H:%M')} ({hours_back}小时)")
+        self.logger.info(f"分析时间范围: {start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')} ({hours_back}小时，本地时间)")
         
         # 🎯 统一多平台分析 - 收集所有平台数据后统一分析
         all_platform_data = {}

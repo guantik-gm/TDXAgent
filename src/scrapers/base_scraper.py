@@ -239,11 +239,9 @@ class BaseScraper(ABC):
             hours_back: Number of hours back from now
             
         Returns:
-            Tuple of (start_time, end_time) with UTC timezone
+            Tuple of (start_time, end_time) with local timezone
         """
-        from datetime import timezone
-        
-        end_time = datetime.now(timezone.utc)
+        end_time = datetime.now()  # 使用本地时区
         start_time = end_time - timedelta(hours=hours_back)
         return start_time, end_time
     
@@ -255,8 +253,8 @@ class BaseScraper(ABC):
         
         Args:
             message: Message to check
-            start_time: Start of time range
-            end_time: End of time range
+            start_time: Start of time range (local timezone)
+            end_time: End of time range (local timezone)
             
         Returns:
             True if message is in range, False otherwise
@@ -266,21 +264,43 @@ class BaseScraper(ABC):
             if not posted_at_str:
                 return False
             
-            # Parse the timestamp
-            if posted_at_str.endswith('Z'):
-                posted_at_str = posted_at_str[:-1] + '+00:00'
-            
-            posted_at = datetime.fromisoformat(posted_at_str.replace('Z', '+00:00'))
-            
-            # Remove timezone info for comparison if present
-            if posted_at.tzinfo:
-                posted_at = posted_at.replace(tzinfo=None)
+            # 智能解析时间戳到本地时区
+            posted_at = self._parse_timestamp_to_local(posted_at_str)
+            if not posted_at:
+                return False
             
             return start_time <= posted_at <= end_time
             
         except (ValueError, TypeError) as e:
             self.logger.warning(f"Failed to parse timestamp: {e}")
             return False
+    
+    def _parse_timestamp_to_local(self, timestamp_str: str) -> Optional[datetime]:
+        """
+        智能解析时间戳到本地时区，兼容新旧数据格式。
+        
+        Args:
+            timestamp_str: ISO格式时间戳字符串
+            
+        Returns:
+            本地时区的datetime对象（naive，用于与time_range比较），失败返回None
+        """
+        try:
+            # 解析ISO格式时间戳
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            
+            # 统一转换为本地时区的naive datetime用于比较
+            if dt.tzinfo:
+                # 有时区信息，转换到本地时区然后移除时区信息
+                local_aware = dt.astimezone()
+                return local_aware.replace(tzinfo=None)
+            else:
+                # 无时区信息，假设已经是本地时间
+                return dt
+                
+        except (ValueError, TypeError) as e:
+            self.logger.debug(f"Failed to parse timestamp '{timestamp_str}': {e}")
+            return None
     
     def filter_messages_by_time(self, messages: List[Dict[str, Any]], 
                                hours_back: int) -> List[Dict[str, Any]]:

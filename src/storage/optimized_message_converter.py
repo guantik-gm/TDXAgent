@@ -129,10 +129,40 @@ class OptimizedMessageConverter:
                 if actual_media:
                     content['media'] = actual_media
             
-            # 元数据（核心信息）
+            # 元数据（核心信息）- 版本化时区处理
+            raw_created_at = raw_message.get('created_at', '')
+            
+            # 智能时区处理
+            if isinstance(raw_created_at, datetime):
+                # datetime对象，转换为本地时区
+                if raw_created_at.tzinfo:
+                    local_time = raw_created_at.astimezone()
+                else:
+                    local_time = raw_created_at
+                posted_at = local_time.isoformat()
+                timezone_info = str(local_time.tzinfo) if local_time.tzinfo else "本地时区"
+            else:
+                # 字符串格式，可能需要解析
+                try:
+                    dt = datetime.fromisoformat(str(raw_created_at).replace('Z', '+00:00'))
+                    if dt.tzinfo:
+                        local_time = dt.astimezone()
+                        posted_at = local_time.isoformat()
+                        timezone_info = str(local_time.tzinfo)
+                    else:
+                        posted_at = str(raw_created_at)
+                        timezone_info = "inherited"
+                except:
+                    posted_at = str(raw_created_at)
+                    timezone_info = "inherited"
+            
             metadata = {
-                "posted_at": raw_message.get('created_at', ''),
-                "platform_specific": {}
+                "posted_at": posted_at,
+                "platform_specific": {
+                    # 🎯 版本标识
+                    "timezone_version": "v2.0_local",
+                    "timezone_info": timezone_info
+                }
             }
             
             # 添加消息URL（Twitter特有）
@@ -250,17 +280,34 @@ class OptimizedMessageConverter:
             if media_files:
                 content['media'] = media_files
             
-            # 元数据（核心信息）
-            posted_at = raw_message.get('date', '') or raw_message.get('timestamp', '') or raw_message.get('created_at', '')
-            if not posted_at:
+            # 元数据（核心信息）- 版本化时区处理
+            raw_date = raw_message.get('date', '') or raw_message.get('timestamp', '') or raw_message.get('created_at', '')
+            if not raw_date:
                 self.logger.debug(f"Telegram消息缺少时间戳: {message_id}")
                 return None
+            
+            # 智能时区处理
+            if isinstance(raw_date, datetime):
+                # Telethon返回的datetime对象，转换为本地时区
+                if raw_date.tzinfo:
+                    local_time = raw_date.astimezone()
+                else:
+                    local_time = raw_date
+                posted_at = local_time.isoformat()
+                timezone_info = str(local_time.tzinfo) if local_time.tzinfo else "本地时区"
+            else:
+                # 字符串格式，直接使用
+                posted_at = str(raw_date)
+                timezone_info = "inherited"
                 
             metadata = {
                 "posted_at": posted_at,
                 "platform_specific": {
                     "message_id": message_id,
-                    "chat_id": raw_message.get('chat', {}).get('id', '')
+                    "chat_id": raw_message.get('chat', {}).get('id', ''),
+                    # 🎯 版本标识
+                    "timezone_version": "v2.0_local",
+                    "timezone_info": timezone_info
                 }
             }
             
@@ -341,13 +388,42 @@ class OptimizedMessageConverter:
             if media_urls:
                 content['media'] = media_urls
             
-            # 元数据（核心信息）
+            # 元数据（核心信息）- 版本化时区处理
+            raw_timestamp = raw_message.get('timestamp', '')
+            
+            # 智能时区处理
+            if isinstance(raw_timestamp, datetime):
+                # datetime对象，转换为本地时区
+                if raw_timestamp.tzinfo:
+                    local_time = raw_timestamp.astimezone()
+                else:
+                    local_time = raw_timestamp
+                posted_at = local_time.isoformat()
+                timezone_info = str(local_time.tzinfo) if local_time.tzinfo else "本地时区"
+            else:
+                # 字符串格式，可能需要解析
+                try:
+                    dt = datetime.fromisoformat(str(raw_timestamp).replace('Z', '+00:00'))
+                    if dt.tzinfo:
+                        local_time = dt.astimezone()
+                        posted_at = local_time.isoformat()
+                        timezone_info = str(local_time.tzinfo)
+                    else:
+                        posted_at = str(raw_timestamp)
+                        timezone_info = "inherited"
+                except:
+                    posted_at = str(raw_timestamp)
+                    timezone_info = "inherited"
+            
             metadata = {
-                "posted_at": raw_message.get('timestamp', ''),
+                "posted_at": posted_at,
                 "platform_specific": {
                     "message_id": message_id,
                     "channel_id": raw_message.get('channel_id', ''),
-                    "guild_id": raw_message.get('guild_id', '')
+                    "guild_id": raw_message.get('guild_id', ''),
+                    # 🎯 版本标识
+                    "timezone_version": "v2.0_local",
+                    "timezone_info": timezone_info
                 }
             }
             

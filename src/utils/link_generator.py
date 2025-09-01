@@ -169,17 +169,43 @@ class LinkGenerator:
         return f"@{author_name} {timestamp}的{platform}消息"
     
     def _format_timestamp(self, timestamp_str: str) -> str:
-        """Format timestamp for display."""
+        """智能格式化时间戳，自动处理新旧数据格式。"""
         if not timestamp_str:
             return "Unknown time"
         
         try:
-            # 解析ISO格式时间戳
-            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-            return dt.strftime('%m-%d %H:%M')
+            # 智能解析时间戳到本地时区
+            dt = self._parse_timestamp_smart(timestamp_str)
+            if dt:
+                return dt.strftime('%m-%d %H:%M')
+            return "Unknown time"
         except:
             # 如果解析失败，返回原始字符串的前部分
             return timestamp_str[:16] if len(timestamp_str) > 16 else timestamp_str
+    
+    def _parse_timestamp_smart(self, timestamp_str: str) -> Optional[datetime]:
+        """
+        智能解析时间戳，自动处理新旧格式和时区转换。
+        
+        Args:
+            timestamp_str: ISO格式时间戳字符串
+            
+        Returns:
+            本地时区的datetime对象，失败返回None
+        """
+        try:
+            # 解析ISO格式时间戳
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            
+            if dt.tzinfo:
+                # 有时区信息（通常是UTC旧数据），转换到本地时区
+                return dt.astimezone()
+            else:
+                # 无时区信息，假设已经是本地时间（新格式数据）
+                return dt
+                
+        except (ValueError, TypeError):
+            return None
     
     def format_telegram_messages_grouped(self, messages: list) -> str:
         """
